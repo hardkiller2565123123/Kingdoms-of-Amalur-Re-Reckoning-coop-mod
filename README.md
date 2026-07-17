@@ -59,27 +59,6 @@ The current proxy actor is only a placeholder. The following systems are still u
 
 ---
 
-## Project Goals
-
-The goal of AmalurCoop is to create a stable private cooperative experience while preserving the original game.
-
-Planned features include:
-
-- Full player synchronization
-- Proper player models
-- Animation replication
-- Equipment synchronization
-- Shared combat
-- Enemy synchronization
-- Quest progression
-- Inventory sharing
-- World event synchronization
-- Area transitions
-- Improved networking
-- Better debugging tools
-
----
-
 ## Requirements
 
 - Visual Studio 2022

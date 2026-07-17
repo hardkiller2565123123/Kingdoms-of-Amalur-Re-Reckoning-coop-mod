@@ -1,0 +1,35 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+ipch/
+
+# Build output
+Debug/
+Release/
+x64/
+x86/
+build/
+[Bb]in/
+[Oo]bj/
+*.obj
+*.iobj
+*.ipdb
+*.pdb
+*.ilk
+*.exp
+*.recipe
+*.tlog
+*.lastbuildstate
+
+# Runtime output
+*.dll
+*.exe
+*.log
+*.ini
+
+# OS/editor
+Thumbs.db
+.DS_Store

@@ -1,0 +1,42 @@
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build output
+build/
+intermediate/
+Debug/
+Release/
+x86/
+x64/
+*.obj
+*.pch
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+
+# Downloaded dependencies
+third_party/
+
+# Runtime and test output
+AmalurCoop.log
+*.log
+*.dmp
+*.zip
+
+# Local configuration and saves
+AmalurCoop.ini
+*.sav
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Core">
+      <UniqueIdentifier>{4CB2B68A-F7F5-4B65-8190-7D21F72FD10B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Features">
+      <UniqueIdentifier>{8740DAAA-BDA9-4BDE-A6D3-EC2B6F495979}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Interface">
+      <UniqueIdentifier>{28EB9AC3-8AB7-4F22-99C8-53D70837958A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Proxy">
+      <UniqueIdentifier>{9A5CEB41-E2EB-46E4-AB12-99998D6F4487}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party">
+      <UniqueIdentifier>{D86B0417-7D34-4652-87FD-2232DE1297B7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\Dear ImGui">
+      <UniqueIdentifier>{31771FC0-D71B-42ED-A045-71485087D522}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\Dear ImGui\Backends">
+      <UniqueIdentifier>{EAFEB91B-F00F-4E02-A813-4F5D92DDF892}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\MinHook">
+      <UniqueIdentifier>{68C14112-6E15-4FE9-B7A5-969A72074961}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\MinHook\HDE">
+      <UniqueIdentifier>{5C40303C-4B53-4EE9-9AD8-6776DDE90711}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="AmalurCoop.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="dllmain.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Config.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Logger.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Paths.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="HookManager.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="CombatScaler.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="GameState.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="LobbyManager.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="MemoryScanner.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="NetworkManager.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="PositionTracker.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="RemotePlayerManager.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="CommandConsole.cpp">
+      <Filter>Interface</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGuiOverlay.cpp">
+      <Filter>Interface</Filter>
+    </ClCompile>
+    <ClCompile Include="DInputProxy.cpp">
+      <Filter>Proxy</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\minhook\src\buffer.c">
+      <Filter>Third Party\MinHook</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\minhook\src\hook.c">
+      <Filter>Third Party\MinHook</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\minhook\src\trampoline.c">
+      <Filter>Third Party\MinHook</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\minhook\src\hde\hde32.c">
+      <Filter>Third Party\MinHook\HDE</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_dx11.cpp">
+      <Filter>Third Party\Dear ImGui\Backends</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp">
+      <Filter>Third Party\Dear ImGui\Backends</Filter>
+    </ClCompile>
+      <ClCompile Include="ResearchLab.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RuntimeInspector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="AmalurCoop.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Config.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="framework.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="HookManager.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Logger.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Paths.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="CombatScaler.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="GameState.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="LobbyManager.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="MemoryScanner.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="NetworkManager.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="PositionTracker.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="RemotePlayerManager.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="CommandConsole.h">
+      <Filter>Interface</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGuiOverlay.h">
+      <Filter>Interface</Filter>
+    </ClInclude>
+    <ClInclude Include="DInputProxy.h">
+      <Filter>Proxy</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\minhook\include\MinHook.h">
+      <Filter>Third Party\MinHook</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\minhook\src\buffer.h">
+      <Filter>Third Party\MinHook</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\minhook\src\trampoline.h">
+      <Filter>Third Party\MinHook</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\minhook\src\hde\hde32.h">
+      <Filter>Third Party\MinHook\HDE</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\minhook\src\hde\pstdint.h">
+      <Filter>Third Party\MinHook\HDE</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\minhook\src\hde\table32.h">
+      <Filter>Third Party\MinHook\HDE</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imconfig.h">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui.h">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_internal.h">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_rectpack.h">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_textedit.h">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_truetype.h">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\backends\imgui_impl_dx11.h">
+      <Filter>Third Party\Dear ImGui\Backends</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h">
+      <Filter>Third Party\Dear ImGui\Backends</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="setup_dependencies.ps1">
+      <Filter>Third Party</Filter>
+    </None>
+    <None Include="third_party\imgui\README.md">
+      <Filter>Third Party\Dear ImGui</Filter>
+    </None>
+    <None Include="third_party\minhook\README.md">
+      <Filter>Third Party\MinHook</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="DINPUT8.def" />
+      <ClInclude Include="ResearchLab.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RuntimeInspector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+</ItemGroup>
+</Project>

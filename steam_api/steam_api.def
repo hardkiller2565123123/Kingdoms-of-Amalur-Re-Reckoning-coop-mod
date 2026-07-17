@@ -1,0 +1,37 @@
+LIBRARY steam_api
+
+EXPORTS
+    SteamAPI_Init
+    SteamAPI_InitSafe
+    SteamAPI_Shutdown
+    SteamAPI_RunCallbacks
+    SteamAPI_ReleaseCurrentThreadMemory
+    SteamAPI_IsSteamRunning
+    SteamAPI_RestartAppIfNecessary
+    SteamAPI_GetHSteamUser
+    SteamAPI_GetHSteamPipe
+    SteamAPI_GetSteamInstallPath
+    SteamAPI_RegisterCallback
+    SteamAPI_UnregisterCallback
+    SteamAPI_RegisterCallResult
+    SteamAPI_UnregisterCallResult
+    SteamInternal_ContextInit
+    SteamInternal_CreateInterface
+    SteamUser
+    SteamFriends
+    SteamUtils
+    SteamMatchmaking
+    SteamUserStats
+    SteamApps
+    SteamNetworking
+    SteamRemoteStorage
+    SteamController
+    SteamInput
+    SteamHTTP
+    SteamUGC
+    SteamInventory
+    SteamVideo
+    SteamScreenshots
+    SteamMusic
+    SteamMusicRemote
+    SteamHTMLSurface

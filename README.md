@@ -17,12 +17,12 @@ AmalurCoop is an early multiplayer research project focused on bringing cooperat
 ### Currently Working
 
 - ✅ Host/client UDP networking
-- ✅ Two connected game instances
 - ✅ Local player transform replication
 - ✅ Visible remote player proxy
 - ✅ Real-time position synchronization
 - ✅ F1 ImGui debug and networking interface
 - ✅ Basic connection diagnostics
+- ✅ Both player walking around. (no animation)
 
 The screenshot above shows two connected game instances with a synchronized remote player prototype.
 
@@ -46,20 +46,6 @@ The current proxy actor is only a placeholder. The following systems are still u
 - World transitions
 - Death and respawning
 - Stable multiplayer sessions
-
----
-
-## Repository Layout
-
-```text
-AmalurCoop.slnx
-│
-├── AmalurCoop/
-│   Main DINPUT8 proxy and multiplayer prototype
-│
-└── steam_api/
-    Steam API proxy project
-```
 
 ---
 
@@ -91,7 +77,6 @@ Planned features include:
 - Area transitions
 - Improved networking
 - Better debugging tools
-- LAN and Internet support
 
 ---
 
@@ -104,30 +89,3 @@ This repository does **not** include any game assets or copyrighted files.
 
 ---
 
-## Scope
-
-This project is intended for:
-
-- Multiplayer research
-- Reverse engineering
-- Modding
-- Preservation
-- Private cooperative play
-
-It does **not** support cheating in official online services. Every player must own a legitimate copy of the game.
-
----
-
-## Contributing
-
-Contributions are welcome.
-
-Whether it's reverse engineering, networking, synchronization, bug fixes, or documentation, any help is appreciated as the project continues to grow.
-
----
-
-## License
-
-Licensed under the **MIT License**.
-
-See the **LICENSE** file for details.

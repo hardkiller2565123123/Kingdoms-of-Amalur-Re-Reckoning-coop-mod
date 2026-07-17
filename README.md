@@ -1,41 +1,133 @@
 # AmalurCoop
 
-Open-source experimental multiplayer prototype for **Kingdoms of Amalur: Re-Reckoning**.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/hardkiller2565123123/images/main/Screenshot%20%281644%29.png" alt="AmalurCoop Multiplayer Screenshot" width="100%">
+</p>
 
-## Current status
+<p align="center">
+  <strong>Open-source experimental multiplayer prototype for <em>Kingdoms of Amalur: Re-Reckoning</em>.</strong>
+</p>
 
-The prototype currently supports:
+---
 
-- Host/client UDP sessions
-- Two connected game instances
-- Local player transform replication
-- Direct creation of a visible remote proxy actor
-- Remote proxy position updates in the same loaded area
-- F1 ImGui diagnostics and session controls
+## Current Status
 
-The visible proxy is still an early research actor. Its appearance, materials, animation, equipment, AI suppression, combat, quests, and world transitions are not complete.
+AmalurCoop is an early multiplayer research project focused on bringing cooperative play to **Kingdoms of Amalur: Re-Reckoning** while keeping the original gameplay experience intact.
 
-## Repository layout
+### Currently Working
+
+- ✅ Host/client UDP networking
+- ✅ Two connected game instances
+- ✅ Local player transform replication
+- ✅ Visible remote player proxy
+- ✅ Real-time position synchronization
+- ✅ F1 ImGui debug and networking interface
+- ✅ Basic connection diagnostics
+
+The screenshot above shows two connected game instances with a synchronized remote player prototype.
+
+---
+
+## Work In Progress
+
+The current proxy actor is only a placeholder. The following systems are still under development:
+
+- Character appearance
+- Materials and shaders
+- Animation synchronization
+- Equipment replication
+- Weapon replication
+- Combat synchronization
+- Health and damage replication
+- Enemy synchronization
+- Quest synchronization
+- Inventory synchronization
+- Dialogue synchronization
+- World transitions
+- Death and respawning
+- Stable multiplayer sessions
+
+---
+
+## Repository Layout
 
 ```text
 AmalurCoop.slnx
-AmalurCoop/       Main DINPUT8 proxy and multiplayer prototype
-steam_api/        Auxiliary Steam API proxy project
+│
+├── AmalurCoop/
+│   Main DINPUT8 proxy and multiplayer prototype
+│
+└── steam_api/
+    Steam API proxy project
 ```
 
-## Build
+---
 
-1. Open `AmalurCoop.slnx` in Visual Studio 2022.
-2. Select **Win32** for the game-compatible build.
-3. Build the `AmalurCoop` project in Release mode.
-4. Copy the resulting proxy DLL and required dependencies to the game directory for testing.
+## Building
 
-This project does not include game files. You must own the game.
+1. Open **AmalurCoop.slnx** in Visual Studio 2022.
+2. Select the **Win32** platform.
+3. Build the **Release** configuration.
+4. Copy the generated DLL and required files into the game directory.
+5. Launch the game and press **F1** to open the multiplayer debug menu.
+
+---
+
+## Project Goals
+
+The goal of AmalurCoop is to create a stable private cooperative experience while preserving the original game.
+
+Planned features include:
+
+- Full player synchronization
+- Proper player models
+- Animation replication
+- Equipment synchronization
+- Shared combat
+- Enemy synchronization
+- Quest progression
+- Inventory sharing
+- World event synchronization
+- Area transitions
+- Improved networking
+- Better debugging tools
+- LAN and Internet support
+
+---
+
+## Requirements
+
+- Visual Studio 2022
+- A legitimate copy of **Kingdoms of Amalur: Re-Reckoning**
+
+This repository does **not** include any game assets or copyrighted files.
+
+---
 
 ## Scope
 
-This project is intended for offline/private cooperative research and modding. It does not support cheating in official online services.
+This project is intended for:
+
+- Multiplayer research
+- Reverse engineering
+- Modding
+- Preservation
+- Private cooperative play
+
+It does **not** support cheating in official online services. Every player must own a legitimate copy of the game.
+
+---
+
+## Contributing
+
+Contributions are welcome.
+
+Whether it's reverse engineering, networking, synchronization, bug fixes, or documentation, any help is appreciated as the project continues to grow.
+
+---
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Licensed under the **MIT License**.
+
+See the **LICENSE** file for details.

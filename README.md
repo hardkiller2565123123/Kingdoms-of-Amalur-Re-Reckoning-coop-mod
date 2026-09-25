@@ -1,7 +1,7 @@
 # AmalurCoop
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/hardkiller2565123123/images/main/Screenshot%20%281644%29.png" alt="AmalurCoop Multiplayer Screenshot" width="100%">
+  <img src="https://www.dsogaming.com/wp-content/uploads/2020/09/KOARR_Gorhart.jpg" alt="AmalurCoop Multiplayer Screenshot" width="100%">
 </p>
 
 <p align="center">

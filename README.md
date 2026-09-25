@@ -13,6 +13,7 @@
 ## Current Status
 
 AmalurCoop is an early multiplayer research project focused on bringing cooperative play to **Kingdoms of Amalur: Re-Reckoning** while keeping the original gameplay experience intact.
+IM STARTING THIS PROJECT BACK UP NEW UPDATE SOOON
 
 ### Currently Working
 

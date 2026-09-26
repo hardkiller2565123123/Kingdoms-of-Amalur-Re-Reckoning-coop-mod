@@ -10,6 +10,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <cstring>
 
 namespace
 {
@@ -36,6 +37,8 @@ namespace
     Config::Settings Sanitize(Config::Settings value)
     {
         value.MaxPlayers = std::clamp(value.MaxPlayers, 1, 16);
+        value.ServerPort = std::clamp(value.ServerPort, 1, 65535);
+        if (value.ServerAddress[0] == '\0') strcpy_s(value.ServerAddress, "auto");
         value.BossHealthPerExtraPlayer = std::clamp(value.BossHealthPerExtraPlayer, 0.0f, 5.0f);
         value.EnemyHealthPerExtraPlayer = std::clamp(value.EnemyHealthPerExtraPlayer, 0.0f, 5.0f);
         value.BossDamagePerExtraPlayer = std::clamp(value.BossDamagePerExtraPlayer, 0.0f, 5.0f);
@@ -65,6 +68,11 @@ namespace Config
 
         Settings loaded{};
         loaded.MaxPlayers = ReadInt("Multiplayer", "MaxPlayers", loaded.MaxPlayers);
+        loaded.AutoConnect = ReadInt("Multiplayer", "AutoConnect", ToIniBool(loaded.AutoConnect)) != 0;
+        char serverAddress[64]{};
+        GetPrivateProfileStringA("Multiplayer", "ServerAddress", loaded.ServerAddress, serverAddress, sizeof(serverAddress), Paths::GetConfigPath().c_str());
+        strcpy_s(loaded.ServerAddress, serverAddress);
+        loaded.ServerPort = ReadInt("Multiplayer", "ServerPort", loaded.ServerPort);
 
         loaded.EnableScaling = ReadInt("Scaling", "Enabled", ToIniBool(loaded.EnableScaling)) != 0;
         loaded.BossHealthPerExtraPlayer = ReadFloat("Scaling", "BossHealthPerExtraPlayer", loaded.BossHealthPerExtraPlayer);
@@ -98,6 +106,9 @@ namespace Config
         const Settings value = Get();
 
         WriteInt("Multiplayer", "MaxPlayers", value.MaxPlayers);
+        WriteInt("Multiplayer", "AutoConnect", ToIniBool(value.AutoConnect));
+        WritePrivateProfileStringA("Multiplayer", "ServerAddress", value.ServerAddress, Paths::GetConfigPath().c_str());
+        WriteInt("Multiplayer", "ServerPort", value.ServerPort);
 
         WriteInt("Scaling", "Enabled", ToIniBool(value.EnableScaling));
         WriteFloat("Scaling", "BossHealthPerExtraPlayer", value.BossHealthPerExtraPlayer);

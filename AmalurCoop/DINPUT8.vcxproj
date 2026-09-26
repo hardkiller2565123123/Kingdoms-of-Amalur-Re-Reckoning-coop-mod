@@ -22,13 +22,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -103,13 +103,16 @@
     <ClCompile Include="Config.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="GameState.cpp" />
+    <ClCompile Include="EngineRuntime.cpp" />
     <ClCompile Include="HookManager.cpp" />
     <ClCompile Include="ImGuiOverlay.cpp" />
     <ClCompile Include="LobbyManager.cpp" />
     <ClCompile Include="Logger.cpp" />
     <ClCompile Include="MemoryScanner.cpp" />
+    <ClCompile Include="MotionReplication.cpp" />
     <ClCompile Include="NetworkManager.cpp" />
     <ClCompile Include="Paths.cpp" />
+    <ClCompile Include="PlayerProxySpawner.cpp" />
     <ClCompile Include="PositionTracker.cpp" />
     <ClCompile Include="RemotePlayerManager.cpp" />
     <ClCompile Include="RuntimeInspector.cpp" />
@@ -131,6 +134,7 @@
     <ClInclude Include="CombatScaler.h" />
     <ClInclude Include="CommandConsole.h" />
     <ClInclude Include="Config.h" />
+    <ClInclude Include="EngineRuntime.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GameState.h" />
     <ClInclude Include="HookManager.h" />
@@ -138,6 +142,7 @@
     <ClInclude Include="LobbyManager.h" />
     <ClInclude Include="Logger.h" />
     <ClInclude Include="MemoryScanner.h" />
+    <ClInclude Include="MotionReplication.h" />
     <ClInclude Include="third_party\minhook\include\MinHook.h" />
     <ClInclude Include="third_party\minhook\src\buffer.h" />
     <ClInclude Include="third_party\minhook\src\trampoline.h" />
@@ -145,7 +150,9 @@
     <ClInclude Include="third_party\minhook\src\hde\pstdint.h" />
     <ClInclude Include="third_party\minhook\src\hde\table32.h" />
     <ClInclude Include="NetworkManager.h" />
+    <ClInclude Include="NetworkProtocol.h" />
     <ClInclude Include="Paths.h" />
+    <ClInclude Include="PlayerProxySpawner.h" />
     <ClInclude Include="PositionTracker.h" />
     <ClInclude Include="RemotePlayerManager.h" />
     <ClInclude Include="RuntimeInspector.h" />
@@ -163,12 +170,7 @@
   <ItemGroup>
     <None Include="DINPUT8.def" />
     <None Include="setup_dependencies.ps1" />
-    <None Include="README.md" />
     <None Include="LICENSE" />
-    <None Include="CHANGELOG.md" />
-    <None Include="CONTRIBUTING.md" />
-    <None Include="SECURITY.md" />
-    <None Include="THIRD_PARTY_NOTICES.md" />
   </ItemGroup>
   <Target Name="EnsureThirdPartySources" BeforeTargets="PrepareForBuild" Condition="!Exists('$(ProjectDir)third_party\imgui\imgui.cpp') Or !Exists('$(ProjectDir)third_party\imgui\backends\imgui_impl_dx11.cpp') Or !Exists('$(ProjectDir)third_party\minhook\src\hook.c')">
     <Message Importance="high" Text="Third-party sources are missing. Running setup_dependencies.ps1..." />

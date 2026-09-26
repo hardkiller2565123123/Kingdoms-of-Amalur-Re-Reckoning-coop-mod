@@ -54,13 +54,22 @@
     <ClCompile Include="GameState.cpp">
       <Filter>Features</Filter>
     </ClCompile>
+    <ClCompile Include="EngineRuntime.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
     <ClCompile Include="LobbyManager.cpp">
       <Filter>Features</Filter>
     </ClCompile>
     <ClCompile Include="MemoryScanner.cpp">
       <Filter>Features</Filter>
     </ClCompile>
+    <ClCompile Include="MotionReplication.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
     <ClCompile Include="NetworkManager.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="PlayerProxySpawner.cpp">
       <Filter>Features</Filter>
     </ClCompile>
     <ClCompile Include="PositionTracker.cpp">
@@ -108,11 +117,11 @@
     <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp">
       <Filter>Third Party\Dear ImGui\Backends</Filter>
     </ClCompile>
-      <ClCompile Include="ResearchLab.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="ResearchLab.cpp">
+      <Filter>Features</Filter>
     </ClCompile>
     <ClCompile Include="RuntimeInspector.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>Features</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -140,13 +149,22 @@
     <ClInclude Include="GameState.h">
       <Filter>Features</Filter>
     </ClInclude>
+    <ClInclude Include="EngineRuntime.h">
+      <Filter>Features</Filter>
+    </ClInclude>
     <ClInclude Include="LobbyManager.h">
       <Filter>Features</Filter>
     </ClInclude>
     <ClInclude Include="MemoryScanner.h">
       <Filter>Features</Filter>
     </ClInclude>
+    <ClInclude Include="MotionReplication.h">
+      <Filter>Features</Filter>
+    </ClInclude>
     <ClInclude Include="NetworkManager.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayerProxySpawner.h">
       <Filter>Features</Filter>
     </ClInclude>
     <ClInclude Include="PositionTracker.h">
@@ -206,25 +224,21 @@
     <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h">
       <Filter>Third Party\Dear ImGui\Backends</Filter>
     </ClInclude>
+    <ClInclude Include="NetworkProtocol.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="setup_dependencies.ps1">
       <Filter>Third Party</Filter>
     </None>
-    <None Include="third_party\imgui\README.md">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </None>
-    <None Include="third_party\minhook\README.md">
-      <Filter>Third Party\MinHook</Filter>
-    </None>
+    <None Include="LICENSE" />
   </ItemGroup>
   <ItemGroup>
     <None Include="DINPUT8.def" />
-      <ClInclude Include="ResearchLab.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="ResearchLab.h">
+      <Filter>Features</Filter>
     </ClInclude>
     <ClInclude Include="RuntimeInspector.h">
-      <Filter>Header Files</Filter>
+      <Filter>Features</Filter>
     </ClInclude>
-</ItemGroup>
+  </ItemGroup>
 </Project>

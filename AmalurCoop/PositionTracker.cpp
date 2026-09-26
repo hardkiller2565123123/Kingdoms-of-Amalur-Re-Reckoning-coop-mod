@@ -23,6 +23,7 @@ namespace
 
     constexpr uintptr_t kPlayerManagerOffset = 0x164C;
     constexpr uintptr_t kPlayerContextObjectHandleOffset = 0x1EC;
+    constexpr uintptr_t kPlayerSetupValueOffset = 0x2BC;
     constexpr uintptr_t kPlayerIndexOffset = 0x100;
 
     constexpr uintptr_t kObjectRegistryOffset = 0x2238;
@@ -32,6 +33,7 @@ namespace
     constexpr uintptr_t kFallbackHandleOffset = 0x54;
 
     constexpr uintptr_t kObjectFlagsOffset = 0x10C;
+    constexpr uintptr_t kActorDefinitionHandleOffset = 0xEC;
     constexpr uintptr_t kComponentArrayOffset = 0x3C;
     constexpr unsigned int kTransformComponentId = 6;
 
@@ -48,6 +50,8 @@ namespace
     uintptr_t g_playerManager = 0;
     uintptr_t g_playerContext = 0;
     uint32_t g_objectHandle = 0;
+    uint32_t g_definitionHandle = 0;
+    uint32_t g_playerSetupValue = 0;
     uintptr_t g_runtimeObject = 0;
     uintptr_t g_transformComponent = 0;
     int g_confidence = 0;
@@ -166,6 +170,8 @@ namespace
         g_position = {};
         g_playerContext = 0;
         g_objectHandle = 0;
+        g_definitionHandle = 0;
+        g_playerSetupValue = 0;
         g_runtimeObject = 0;
         g_transformComponent = 0;
         g_confidence = 0;
@@ -256,6 +262,11 @@ namespace PositionTracker
             return;
         }
 
+        uint32_t definitionHandle = 0;
+        uint32_t playerSetupValue = 0;
+        SafeRead(object + kActorDefinitionHandleOffset, definitionHandle);
+        SafeRead(context + kPlayerSetupValueOffset, playerSetupValue);
+
         uint8_t objectFlags = 0;
         if (!SafeRead(object + kObjectFlagsOffset, objectFlags) || (objectFlags & 1) == 0)
         {
@@ -288,6 +299,8 @@ namespace PositionTracker
             g_playerManager = manager;
             g_playerContext = context;
             g_objectHandle = objectHandle;
+            g_definitionHandle = definitionHandle;
+            g_playerSetupValue = playerSetupValue;
             g_runtimeObject = object;
             g_transformComponent = transform;
             g_position = position;
@@ -302,11 +315,13 @@ namespace PositionTracker
         {
             g_lastLogTick = now;
             Logger::WriteFormat(Logger::Level::Debug,
-                "Player runtime: root=0x%08X manager=0x%08X context=0x%08X handle=0x%08X object=0x%08X transform=0x%08X XYZ=(%.3f, %.3f, %.3f)",
+                "Player runtime: root=0x%08X manager=0x%08X context=0x%08X handle=0x%08X def=0x%08X setup=0x%08X object=0x%08X transform=0x%08X XYZ=(%.3f, %.3f, %.3f)",
                 static_cast<unsigned int>(playerRoot),
                 static_cast<unsigned int>(manager),
                 static_cast<unsigned int>(context),
                 objectHandle,
+                definitionHandle,
+                playerSetupValue,
                 static_cast<unsigned int>(object),
                 static_cast<unsigned int>(transform),
                 position.X, position.Y, position.Z);
@@ -341,6 +356,8 @@ namespace PositionTracker
     uintptr_t GetPlayerManager() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerManager; }
     uintptr_t GetPlayerContext() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerContext; }
     uint32_t GetObjectHandle() { std::lock_guard<std::mutex> lock(g_mutex); return g_objectHandle; }
+    uint32_t GetDefinitionHandle() { std::lock_guard<std::mutex> lock(g_mutex); return g_definitionHandle; }
+    uint32_t GetPlayerSetupValue() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerSetupValue; }
     uintptr_t GetRuntimeObject() { std::lock_guard<std::mutex> lock(g_mutex); return g_runtimeObject; }
     uintptr_t GetTransformComponent() { std::lock_guard<std::mutex> lock(g_mutex); return g_transformComponent; }
 }

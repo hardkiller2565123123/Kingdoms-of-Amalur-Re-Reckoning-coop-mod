@@ -123,7 +123,6 @@ namespace
     std::string g_lastAction =
         "No runtime action requested";
 
-    ULONGLONG g_lastRefreshTick = 0;
 
     uintptr_t RuntimeAddress(
         uintptr_t idaAddress)
@@ -814,8 +813,6 @@ namespace RuntimeInspector
             true,
             std::memory_order_release);
 
-        g_lastRefreshTick = 0;
-
         Logger::Write(
             Logger::Level::Success,
             "Runtime-record inspector initialized "
@@ -860,26 +857,13 @@ namespace RuntimeInspector
             return;
         }
 
-        const ULONGLONG now =
-            GetTickCount64();
-
-        const bool manuallyRequested =
+        const bool refreshRequested =
             g_refreshRequested.exchange(
                 false,
                 std::memory_order_acq_rel);
 
-        const bool timerElapsed =
-            g_lastRefreshTick == 0 ||
-            now - g_lastRefreshTick >= 1000;
-
-        if (!manuallyRequested &&
-            !timerElapsed)
-        {
+        if (!refreshRequested)
             return;
-        }
-
-        g_lastRefreshTick =
-            now;
 
         PerformRefresh();
     }

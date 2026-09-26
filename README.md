@@ -20,7 +20,6 @@ The visible proxy is still an early research actor. Its appearance, materials, a
 ```text
 AmalurCoop.slnx
 AmalurCoop/       Main DINPUT8 proxy and multiplayer prototype
-steam_api/        Auxiliary Steam API proxy project
 ```
 
 ## Build

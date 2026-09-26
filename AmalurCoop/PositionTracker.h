@@ -25,6 +25,8 @@ namespace PositionTracker
     uintptr_t GetPlayerManager();
     uintptr_t GetPlayerContext();
     uint32_t GetObjectHandle();
+    uint32_t GetDefinitionHandle();
+    uint32_t GetPlayerSetupValue();
     uintptr_t GetRuntimeObject();
     uintptr_t GetTransformComponent();
 }

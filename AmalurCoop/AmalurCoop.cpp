@@ -73,10 +73,6 @@ namespace
 
         Logger::Write(
             Logger::Level::Info,
-            "Menu toggle: F1");
-
-        Logger::Write(
-            Logger::Level::Info,
             "Log file: AmalurCoop.log");
 
         Logger::Write(
@@ -318,9 +314,8 @@ namespace
             Logger::Level::Info,
             "Shutting down ImGui overlay...");
 
-        // The overlay owns active render hooks, so it must be shut down before
-        // MinHook is uninitialized.
         ImGuiOverlay::Shutdown();
+
         ResearchLab::Shutdown();
 
         Logger::Write(

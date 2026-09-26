@@ -33,6 +33,18 @@ namespace NetworkManager
         Vec3 Position{};
     };
 
+    struct MotionEventPacket
+    {
+        std::uint32_t ActorNetId = 0;
+        std::uint32_t MotionHash = 0;
+        std::int32_t RequestedVariant = 0;
+        std::int32_t ParameterA = 0;
+        std::int32_t ParameterB = 0;
+        std::uint32_t SenderTick = 0;
+        std::uint32_t PacketSequence = 0;
+        std::uint8_t FlagA = 0;
+    };
+
     struct Stats
     {
         std::uint64_t PacketsSent = 0;
@@ -44,8 +56,6 @@ namespace NetworkManager
         std::uint32_t CurrentPingMs = 0;
         std::uint16_t BoundPort = 0;
         std::size_t ConnectedPeers = 0;
-        bool UpnpMapped = false;
-        std::string UpnpStatus;
     };
 
     void Initialize();
@@ -53,18 +63,18 @@ namespace NetworkManager
     void Update();
 
     bool Host(unsigned short port);
-    bool Join(const std::string& ip, unsigned short port);
+    bool Join(const std::string& address, unsigned short port);
     void Disconnect();
-
-    // Attempts to create a router UPnP UDP mapping. Router support varies.
-    bool TryMapPortUpnp(unsigned short port);
-    void RemoveUpnpMapping();
 
     Mode GetMode();
     std::string GetStatusText();
     std::string GetModeText();
     Stats GetStats();
     std::vector<PeerInfo> GetPeers();
+    std::uint32_t GetLocalPlayerId();
+
+    bool SendMotionEvent(const MotionEventPacket& packet);
+    bool PopMotionEvent(MotionEventPacket& packet);
 
     bool HasRemoteTransform();
     Vec3 GetRemoteTransform();

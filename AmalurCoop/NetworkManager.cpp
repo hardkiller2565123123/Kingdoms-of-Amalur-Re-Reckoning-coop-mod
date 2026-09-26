@@ -1,151 +1,107 @@
 #include "NetworkManager.h"
 
+#include "Config.h"
+#include "LobbyManager.h"
+#include "Logger.h"
+#include "NetworkProtocol.h"
+#include "PositionTracker.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <Windows.h>
 
-#if __has_include(<natupnp.h>)
-#include <natupnp.h>
-#define AMALUR_HAS_NATUPNP 1
-#else
-#define AMALUR_HAS_NATUPNP 0
-#endif
-
-#include "LobbyManager.h"
-#include "Logger.h"
-#include "PositionTracker.h"
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <cstdint>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #pragma comment(lib, "Ws2_32.lib")
-#pragma comment(lib, "Ole32.lib")
-#pragma comment(lib, "OleAut32.lib")
 
 namespace
 {
-    constexpr std::uint32_t kMagic = 0x504F4341; // "ACOP"
-    constexpr std::uint16_t kProtocolVersion = 1;
-    constexpr std::uint64_t kTransformIntervalMs = 50;   // 20 Hz
+    using AmalurNet::Packet;
+    using AmalurNet::PacketType;
+
+    constexpr std::uint64_t kTransformIntervalMs = 33;
+    constexpr std::uint64_t kHelloIntervalMs = 1000;
     constexpr std::uint64_t kHeartbeatIntervalMs = 1000;
-    constexpr std::uint64_t kConnectionTimeoutMs = 8000;
-    constexpr std::size_t kMaxPeers = 15;
-
-    enum class PacketType : std::uint8_t
-    {
-        Hello = 1,
-        Welcome = 2,
-        Transform = 3,
-        Ping = 4,
-        Pong = 5,
-        Goodbye = 6
-    };
-
-#pragma pack(push, 1)
-    struct Packet
-    {
-        std::uint32_t Magic = kMagic;
-        std::uint16_t Version = kProtocolVersion;
-        PacketType Type = PacketType::Hello;
-        std::uint8_t Reserved = 0;
-        std::uint32_t PlayerId = 0;
-        std::uint32_t Sequence = 0;
-        std::uint64_t TimestampMs = 0;
-        float X = 0.0f;
-        float Y = 0.0f;
-        float Z = 0.0f;
-    };
-#pragma pack(pop)
-
-    static_assert(sizeof(Packet) == 36, "Unexpected network packet size");
+    constexpr std::uint64_t kTimeoutMs = 8000;
 
     struct PeerState
     {
-        sockaddr_in Endpoint{};
+        sockaddr_in Address{};
+        bool HasAddress = false;
         std::uint32_t PlayerId = 0;
-        std::uint32_t LastReceivedSequence = 0;
-        std::uint32_t PingMs = 0;
+        std::uint32_t LastSequence = 0;
+        std::uint32_t LastMotionSequence = 0;
         std::uint64_t LastSeenMs = 0;
-        std::uint64_t LastPingSentMs = 0;
+        std::uint32_t PingMs = 0;
         bool Connected = false;
         bool HasTransform = false;
         NetworkManager::Vec3 Position{};
     };
 
-    std::atomic<NetworkManager::Mode> g_mode{ NetworkManager::Mode::Offline };
+    std::mutex g_mutex;
     SOCKET g_socket = INVALID_SOCKET;
     bool g_winsockReady = false;
-    std::string g_status = "Offline";
-    std::mutex g_mutex;
+    std::atomic<NetworkManager::Mode> g_mode{ NetworkManager::Mode::Offline };
 
-    sockaddr_in g_serverAddress{};
-    bool g_hasServerAddress = false;
+    sockaddr_in g_server{};
+    bool g_hasServer = false;
+    bool g_autoDiscover = false;
+    std::string g_status = "Offline";
+
     std::vector<PeerState> g_peers;
+    std::deque<NetworkManager::MotionEventPacket> g_motionQueue;
 
     std::uint32_t g_localPlayerId = 0;
-    std::uint32_t g_nextPlayerId = 2;
-    std::uint32_t g_sendSequence = 0;
-    std::uint64_t g_lastTransformSentMs = 0;
-    std::uint64_t g_lastHeartbeatMs = 0;
-    std::uint16_t g_boundPort = 0;
+    std::uint32_t g_nextHostPlayerId = 2;
+    std::uint32_t g_sequence = 0;
+    std::uint32_t g_serverPingMs = 0;
+
+    std::uint64_t g_lastHello = 0;
+    std::uint64_t g_lastTransform = 0;
+    std::uint64_t g_lastHeartbeat = 0;
+    std::uint64_t g_serverLastSeen = 0;
+    std::uint16_t g_port = AmalurNet::DefaultPort;
 
     std::uint64_t g_packetsSent = 0;
     std::uint64_t g_packetsReceived = 0;
     std::uint64_t g_bytesSent = 0;
     std::uint64_t g_bytesReceived = 0;
-    std::uint64_t g_droppedPackets = 0;
-    std::uint64_t g_lastTransformReceiveLogMs = 0;
-
-    bool g_upnpMapped = false;
-    std::string g_upnpStatus = "Not requested";
-    unsigned short g_upnpPort = 0;
-#if AMALUR_HAS_NATUPNP
-    IStaticPortMapping* g_upnpMapping = nullptr;
-#endif
+    std::uint64_t g_dropped = 0;
 
     std::uint64_t NowMs()
     {
-        return static_cast<std::uint64_t>(GetTickCount64());
+        return GetTickCount64();
     }
 
-    bool IsFinitePosition(const Packet& packet)
+    bool SameAddress(const sockaddr_in& a, const sockaddr_in& b)
     {
-        return std::isfinite(packet.X) &&
-               std::isfinite(packet.Y) &&
-               std::isfinite(packet.Z) &&
-               std::fabs(packet.X) < 100000000.0f &&
-               std::fabs(packet.Y) < 100000000.0f &&
-               std::fabs(packet.Z) < 100000000.0f;
+        return a.sin_addr.s_addr == b.sin_addr.s_addr &&
+            a.sin_port == b.sin_port;
     }
 
-    bool EndpointEquals(const sockaddr_in& a, const sockaddr_in& b)
-    {
-        return a.sin_family == b.sin_family &&
-               a.sin_port == b.sin_port &&
-               a.sin_addr.s_addr == b.sin_addr.s_addr;
-    }
-
-    std::string EndpointAddress(const sockaddr_in& endpoint)
+    std::string AddressText(const sockaddr_in& address)
     {
         char ip[INET_ADDRSTRLEN]{};
-        inet_ntop(AF_INET, &endpoint.sin_addr, ip, static_cast<socklen_t>(sizeof(ip)));
+        if (!inet_ntop(AF_INET, &address.sin_addr, ip, sizeof(ip)))
+            return "unknown";
         return ip;
     }
 
-    void CloseSocketLocked()
+    void CloseSocket()
     {
         if (g_socket != INVALID_SOCKET)
         {
@@ -154,44 +110,79 @@ namespace
         }
     }
 
-    void ResetSessionLocked()
+    bool OpenSocket(unsigned short bindPort)
     {
-        CloseSocketLocked();
-        g_mode.store(NetworkManager::Mode::Offline);
-        g_status = "Offline";
-        g_hasServerAddress = false;
-        g_serverAddress = {};
-        g_peers.clear();
-        g_localPlayerId = 0;
-        g_nextPlayerId = 2;
-        g_sendSequence = 0;
-        g_lastTransformSentMs = 0;
-        g_lastHeartbeatMs = 0;
-        g_boundPort = 0;
-        LobbyManager::SetPlayerCount(1);
+        CloseSocket();
+
+        g_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_socket == INVALID_SOCKET)
+            return false;
+
+        BOOL enabled = TRUE;
+        setsockopt(g_socket, SOL_SOCKET, SO_BROADCAST,
+            reinterpret_cast<const char*>(&enabled), sizeof(enabled));
+        setsockopt(g_socket, SOL_SOCKET, SO_REUSEADDR,
+            reinterpret_cast<const char*>(&enabled), sizeof(enabled));
+
+        sockaddr_in local{};
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_ANY);
+        local.sin_port = htons(bindPort);
+
+        if (bind(g_socket, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == SOCKET_ERROR)
+        {
+            CloseSocket();
+            return false;
+        }
+
+        u_long nonBlocking = 1;
+        if (ioctlsocket(g_socket, FIONBIO, &nonBlocking) == SOCKET_ERROR)
+        {
+            CloseSocket();
+            return false;
+        }
+
+        return true;
     }
 
-    bool SendPacketLocked(const sockaddr_in& endpoint, Packet packet)
+    void ResetSessionState()
+    {
+        g_server = {};
+        g_hasServer = false;
+        g_autoDiscover = false;
+        g_peers.clear();
+        g_motionQueue.clear();
+        g_localPlayerId = 0;
+        g_nextHostPlayerId = 2;
+        g_sequence = 0;
+        g_serverPingMs = 0;
+        g_lastHello = 0;
+        g_lastTransform = 0;
+        g_lastHeartbeat = 0;
+        g_serverLastSeen = 0;
+    }
+
+    bool SendTo(const sockaddr_in& to, Packet packet)
     {
         if (g_socket == INVALID_SOCKET)
             return false;
 
-        packet.Magic = kMagic;
-        packet.Version = kProtocolVersion;
-        if (packet.TimestampMs == 0)
+        packet.MagicValue = AmalurNet::Magic;
+        packet.Version = AmalurNet::ProtocolVersion;
+        if (!packet.TimestampMs)
             packet.TimestampMs = NowMs();
 
         const int sent = sendto(
             g_socket,
             reinterpret_cast<const char*>(&packet),
-            static_cast<int>(sizeof(packet)),
+            sizeof(packet),
             0,
-            reinterpret_cast<const sockaddr*>(&endpoint),
-            sizeof(endpoint));
+            reinterpret_cast<const sockaddr*>(&to),
+            sizeof(to));
 
-        if (sent != static_cast<int>(sizeof(packet)))
+        if (sent != sizeof(packet))
         {
-            ++g_droppedPackets;
+            ++g_dropped;
             return false;
         }
 
@@ -200,159 +191,289 @@ namespace
         return true;
     }
 
-    PeerState* FindPeerByEndpointLocked(const sockaddr_in& endpoint)
+    PeerState* FindPeer(std::uint32_t id)
     {
         for (auto& peer : g_peers)
         {
-            if (EndpointEquals(peer.Endpoint, endpoint))
+            if (peer.PlayerId == id)
                 return &peer;
         }
         return nullptr;
     }
 
-    PeerState* FindPeerByIdLocked(std::uint32_t playerId)
+    PeerState* FindPeerByAddress(const sockaddr_in& address)
     {
         for (auto& peer : g_peers)
         {
-            if (peer.PlayerId == playerId)
+            if (peer.HasAddress && SameAddress(peer.Address, address))
                 return &peer;
         }
         return nullptr;
     }
 
-    void UpdateLobbyCountLocked()
+    PeerState& GetOrAddPeer(std::uint32_t id)
     {
-        std::size_t connected = 0;
+        if (auto* peer = FindPeer(id))
+            return *peer;
+
+        g_peers.push_back({});
+        g_peers.back().PlayerId = id;
+        return g_peers.back();
+    }
+
+    void UpdateLobby()
+    {
+        std::size_t playerCount = g_localPlayerId ? 1u : 0u;
         for (const auto& peer : g_peers)
         {
-            if (peer.Connected)
-                ++connected;
+            if (peer.Connected && peer.PlayerId != g_localPlayerId)
+                ++playerCount;
         }
 
         LobbyManager::SetPlayerCount(
-            static_cast<int>(std::min<std::size_t>(
-                connected + 1,
-                static_cast<std::size_t>(LobbyManager::GetMaxPlayers()))));
+            static_cast<int>(std::max<std::size_t>(1u, playerCount)));
     }
 
-    PeerState* AddHostPeerLocked(const sockaddr_in& endpoint)
+    bool ResolveServer(const std::string& address, unsigned short port)
     {
-        if (PeerState* existing = FindPeerByEndpointLocked(endpoint))
-            return existing;
+        g_server = {};
+        g_server.sin_family = AF_INET;
+        g_server.sin_port = htons(port);
 
-        if (g_peers.size() >= kMaxPeers)
-            return nullptr;
+        if (address.empty() || address == "auto")
+        {
+            g_server.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            g_autoDiscover = true;
+            g_hasServer = true;
+            return true;
+        }
 
-        PeerState peer{};
-        peer.Endpoint = endpoint;
-        peer.PlayerId = g_nextPlayerId++;
-        peer.LastSeenMs = NowMs();
-        peer.Connected = true;
-        g_peers.push_back(peer);
-        return &g_peers.back();
+        g_autoDiscover = false;
+        if (inet_pton(AF_INET, address.c_str(), &g_server.sin_addr) == 1)
+        {
+            g_hasServer = true;
+            return true;
+        }
+
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+
+        addrinfo* result = nullptr;
+        if (getaddrinfo(address.c_str(), nullptr, &hints, &result) != 0 || !result)
+            return false;
+
+        g_server.sin_addr =
+            reinterpret_cast<sockaddr_in*>(result->ai_addr)->sin_addr;
+        freeaddrinfo(result);
+        g_hasServer = true;
+        return true;
     }
 
-    void BroadcastLocked(Packet packet, const sockaddr_in* exceptEndpoint = nullptr)
+    void BroadcastHostPacket(Packet packet, std::uint32_t exceptPlayerId = 0)
     {
         for (const auto& peer : g_peers)
         {
-            if (!peer.Connected)
+            if (!peer.Connected || !peer.HasAddress || peer.PlayerId == exceptPlayerId)
                 continue;
-            if (exceptEndpoint && EndpointEquals(peer.Endpoint, *exceptEndpoint))
-                continue;
-            SendPacketLocked(peer.Endpoint, packet);
+            SendTo(peer.Address, packet);
         }
     }
 
-    void SendLocalTransformLocked(std::uint64_t now)
+    void QueueMotion(const Packet& packet, PeerState& peer)
     {
-        if (now - g_lastTransformSentMs < kTransformIntervalMs)
+        const std::uint32_t sequence =
+            packet.PacketSequence ? packet.PacketSequence : packet.Sequence;
+        if (sequence <= peer.LastMotionSequence)
+        {
+            ++g_dropped;
             return;
-        if (!PositionTracker::HasPosition())
+        }
+
+        peer.LastMotionSequence = sequence;
+
+        NetworkManager::MotionEventPacket event{};
+        event.ActorNetId = packet.PlayerId;
+        event.MotionHash = packet.MotionHash;
+        event.RequestedVariant = packet.RequestedVariant;
+        event.ParameterA = packet.ParameterA;
+        event.ParameterB = packet.ParameterB;
+        event.SenderTick = packet.SenderTick;
+        event.PacketSequence = sequence;
+        event.FlagA = packet.FlagA;
+
+        if (g_motionQueue.size() >= 128)
+            g_motionQueue.pop_front();
+        g_motionQueue.push_back(event);
+    }
+
+    void ApplyRemotePacket(const Packet& packet)
+    {
+        if (!packet.PlayerId || packet.PlayerId == g_localPlayerId)
             return;
 
-        const PositionTracker::Vec3 position = PositionTracker::GetPosition();
+        const std::uint64_t now = NowMs();
+        auto& peer = GetOrAddPeer(packet.PlayerId);
+        peer.Connected = true;
+        peer.LastSeenMs = now;
+
+        switch (packet.Type)
+        {
+        case PacketType::Transform:
+            if (packet.Sequence <= peer.LastSequence ||
+                !std::isfinite(packet.X) ||
+                !std::isfinite(packet.Y) ||
+                !std::isfinite(packet.Z))
+            {
+                ++g_dropped;
+                return;
+            }
+
+            peer.LastSequence = packet.Sequence;
+            peer.Position = { packet.X, packet.Y, packet.Z };
+            peer.HasTransform = true;
+            UpdateLobby();
+            break;
+
+        case PacketType::MotionEvent:
+            QueueMotion(packet, peer);
+            break;
+
+        case PacketType::PlayerLeft:
+        case PacketType::Goodbye:
+            peer.Connected = false;
+            UpdateLobby();
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    void SendHello(std::uint64_t now)
+    {
+        if (g_mode.load(std::memory_order_acquire) != NetworkManager::Mode::Client ||
+            !g_hasServer || g_localPlayerId || now - g_lastHello < kHelloIntervalMs)
+        {
+            return;
+        }
+
         Packet packet{};
-        packet.Type = PacketType::Transform;
-        packet.PlayerId = g_localPlayerId;
-        packet.Sequence = ++g_sendSequence;
-        packet.X = position.X;
-        packet.Y = position.Y;
-        packet.Z = position.Z;
-
-        const NetworkManager::Mode mode = g_mode.load();
-        if (mode == NetworkManager::Mode::Host)
-            BroadcastLocked(packet);
-        else if (mode == NetworkManager::Mode::Client && g_hasServerAddress && g_localPlayerId != 0)
-            SendPacketLocked(g_serverAddress, packet);
-
-        g_lastTransformSentMs = now;
+        packet.Type = PacketType::Hello;
+        packet.Sequence = ++g_sequence;
+        SendTo(g_server, packet);
+        g_lastHello = now;
     }
 
-    void SendHeartbeatsLocked(std::uint64_t now)
-    {
-        if (now - g_lastHeartbeatMs < kHeartbeatIntervalMs)
-            return;
-
-        Packet ping{};
-        ping.Type = PacketType::Ping;
-        ping.PlayerId = g_localPlayerId;
-        ping.Sequence = ++g_sendSequence;
-
-        const NetworkManager::Mode mode = g_mode.load();
-        if (mode == NetworkManager::Mode::Host)
-        {
-            for (auto& peer : g_peers)
-            {
-                if (!peer.Connected)
-                    continue;
-                peer.LastPingSentMs = now;
-                SendPacketLocked(peer.Endpoint, ping);
-            }
-        }
-        else if (mode == NetworkManager::Mode::Client && g_hasServerAddress)
-        {
-            if (!g_peers.empty())
-                g_peers.front().LastPingSentMs = now;
-            SendPacketLocked(g_serverAddress, ping);
-        }
-
-        g_lastHeartbeatMs = now;
-    }
-
-    void RemoveTimedOutPeersLocked(std::uint64_t now)
-    {
-        bool changed = false;
-        for (auto& peer : g_peers)
-        {
-            if (peer.Connected && now - peer.LastSeenMs > kConnectionTimeoutMs)
-            {
-                peer.Connected = false;
-                changed = true;
-                Logger::Write("Network peer timed out");
-            }
-        }
-
-        if (changed)
-        {
-            UpdateLobbyCountLocked();
-            if (g_mode.load() == NetworkManager::Mode::Client)
-                g_status = "Connection timed out";
-        }
-    }
-
-    void HandlePacketLocked(const Packet& packet, const sockaddr_in& from)
+    void HandleClientPacket(const Packet& packet, const sockaddr_in& from)
     {
         const std::uint64_t now = NowMs();
-        const NetworkManager::Mode mode = g_mode.load();
 
-        if (mode == NetworkManager::Mode::Host && packet.Type == PacketType::Hello)
+        if (packet.Type == PacketType::Welcome)
         {
-            PeerState* peer = AddHostPeerLocked(from);
+            g_server = from;
+            g_hasServer = true;
+            g_localPlayerId = packet.PlayerId;
+            g_serverLastSeen = now;
+            g_status = "Connected as player " + std::to_string(g_localPlayerId);
+            Logger::Write(g_status);
+            UpdateLobby();
+            return;
+        }
+
+        if (!g_localPlayerId)
+            return;
+
+        g_serverLastSeen = now;
+
+        if (packet.Type == PacketType::Ping)
+        {
+            Packet pong{};
+            pong.Type = PacketType::Pong;
+            pong.PlayerId = g_localPlayerId;
+            pong.Sequence = packet.Sequence;
+            pong.TimestampMs = packet.TimestampMs;
+            SendTo(g_server, pong);
+            return;
+        }
+
+        if (packet.Type == PacketType::Pong)
+        {
+            if (packet.TimestampMs <= now)
+            {
+                g_serverPingMs = static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(9999, now - packet.TimestampMs));
+            }
+            return;
+        }
+
+        if (packet.Type == PacketType::Goodbye && packet.PlayerId == 1)
+        {
+            g_localPlayerId = 0;
+            g_peers.clear();
+            g_hasServer = false;
+            g_status = "Host disconnected";
+            UpdateLobby();
+            return;
+        }
+
+        ApplyRemotePacket(packet);
+    }
+
+    void RemoveHostPeer(std::uint32_t playerId)
+    {
+        auto it = std::find_if(
+            g_peers.begin(), g_peers.end(),
+            [playerId](const PeerState& peer)
+            {
+                return peer.PlayerId == playerId;
+            });
+
+        if (it == g_peers.end())
+            return;
+
+        Packet left{};
+        left.Type = PacketType::PlayerLeft;
+        left.PlayerId = playerId;
+        BroadcastHostPacket(left, playerId);
+
+        Logger::WriteFormat(
+            Logger::Level::Info,
+            "Network peer %u disconnected",
+            playerId);
+
+        g_peers.erase(it);
+        UpdateLobby();
+    }
+
+    void HandleHostPacket(Packet packet, const sockaddr_in& from)
+    {
+        const std::uint64_t now = NowMs();
+
+        if (packet.Type == PacketType::Hello)
+        {
+            PeerState* peer = FindPeerByAddress(from);
             if (!peer)
             {
-                g_status = "Host full";
-                return;
+                if (g_peers.size() >= AmalurNet::MaxPlayers - 1)
+                {
+                    ++g_dropped;
+                    return;
+                }
+
+                g_peers.push_back({});
+                peer = &g_peers.back();
+                peer->Address = from;
+                peer->HasAddress = true;
+                peer->PlayerId = g_nextHostPlayerId++;
+                peer->Connected = true;
+
+                Logger::WriteFormat(
+                    Logger::Level::Success,
+                    "Network peer %u joined from %s:%u",
+                    peer->PlayerId,
+                    AddressText(from).c_str(),
+                    static_cast<unsigned int>(ntohs(from.sin_port)));
             }
 
             peer->Connected = true;
@@ -361,140 +482,110 @@ namespace
             Packet welcome{};
             welcome.Type = PacketType::Welcome;
             welcome.PlayerId = peer->PlayerId;
-            welcome.Sequence = ++g_sendSequence;
-            SendPacketLocked(from, welcome);
-
-            g_status = "Hosting: " + std::to_string(g_peers.size()) + " remote peer(s)";
-            UpdateLobbyCountLocked();
-            Logger::Write("Client joined from " + EndpointAddress(from));
+            welcome.Sequence = ++g_sequence;
+            SendTo(peer->Address, welcome);
+            UpdateLobby();
             return;
         }
 
-        if (mode == NetworkManager::Mode::Client && packet.Type == PacketType::Welcome)
-        {
-            if (!EndpointEquals(from, g_serverAddress))
-                return;
-
-            g_localPlayerId = packet.PlayerId;
-            if (g_peers.empty())
-            {
-                PeerState host{};
-                host.Endpoint = from;
-                host.PlayerId = 1;
-                host.Connected = true;
-                host.LastSeenMs = now;
-                g_peers.push_back(host);
-            }
-            else
-            {
-                g_peers.front().Connected = true;
-                g_peers.front().LastSeenMs = now;
-            }
-
-            g_status = "Connected to host as player " + std::to_string(g_localPlayerId);
-            LobbyManager::SetPlayerCount(2);
-            Logger::Write(g_status);
-            return;
-        }
-
-        PeerState* peer = FindPeerByEndpointLocked(from);
-        if (!peer && mode == NetworkManager::Mode::Client && EndpointEquals(from, g_serverAddress))
-        {
-            PeerState host{};
-            host.Endpoint = from;
-            host.PlayerId = 1;
-            host.Connected = true;
-            host.LastSeenMs = now;
-            g_peers.push_back(host);
-            peer = &g_peers.back();
-        }
-
+        PeerState* peer = FindPeerByAddress(from);
         if (!peer)
+        {
+            ++g_dropped;
             return;
+        }
 
         peer->Connected = true;
         peer->LastSeenMs = now;
+        packet.PlayerId = peer->PlayerId;
 
-        switch (packet.Type)
+        if (packet.Type == PacketType::Goodbye)
         {
-        case PacketType::Transform:
-            if (!IsFinitePosition(packet) || packet.Sequence <= peer->LastReceivedSequence)
-            {
-                ++g_droppedPackets;
-                return;
-            }
-            peer->LastReceivedSequence = packet.Sequence;
-            peer->PlayerId = packet.PlayerId ? packet.PlayerId : peer->PlayerId;
-            peer->Position = { packet.X, packet.Y, packet.Z };
-            peer->HasTransform = true;
+            const std::uint32_t playerId = peer->PlayerId;
+            RemoveHostPeer(playerId);
+            return;
+        }
 
-            if (now - g_lastTransformReceiveLogMs >= 2000)
-            {
-                g_lastTransformReceiveLogMs = now;
-                Logger::WriteFormat(
-                    Logger::Level::Debug,
-                    "NET received transform player=%u seq=%u XYZ=(%.3f, %.3f, %.3f)",
-                    peer->PlayerId, packet.Sequence, packet.X, packet.Y, packet.Z);
-            }
-
-            // Host relays one client's transform to all other clients.
-            if (mode == NetworkManager::Mode::Host)
-                BroadcastLocked(packet, &from);
-            break;
-
-        case PacketType::Ping:
+        if (packet.Type == PacketType::Ping)
         {
             Packet pong{};
             pong.Type = PacketType::Pong;
             pong.PlayerId = g_localPlayerId;
             pong.Sequence = packet.Sequence;
             pong.TimestampMs = packet.TimestampMs;
-            SendPacketLocked(from, pong);
-            break;
+            SendTo(peer->Address, pong);
+            return;
         }
 
-        case PacketType::Pong:
+        if (packet.Type == PacketType::Pong)
+        {
             if (packet.TimestampMs <= now)
-                peer->PingMs = static_cast<std::uint32_t>(std::min<std::uint64_t>(now - packet.TimestampMs, 9999));
-            break;
-
-        case PacketType::Goodbye:
-            peer->Connected = false;
-            UpdateLobbyCountLocked();
-            break;
-
-        default:
-            break;
+            {
+                peer->PingMs = static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(9999, now - packet.TimestampMs));
+            }
+            return;
         }
+
+        ApplyRemotePacket(packet);
+        BroadcastHostPacket(packet, peer->PlayerId);
     }
 
-    std::string GetLocalIpv4()
+    void SendLocalTransform(std::uint64_t now)
     {
-        char hostName[256]{};
-        if (gethostname(hostName, static_cast<int>(sizeof(hostName))) == SOCKET_ERROR)
-            return "127.0.0.1";
-
-        addrinfo hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_DGRAM;
-
-        addrinfo* results = nullptr;
-        if (getaddrinfo(hostName, nullptr, &hints, &results) != 0)
-            return "127.0.0.1";
-
-        std::string selected = "127.0.0.1";
-        for (addrinfo* item = results; item; item = item->ai_next)
+        if (!g_localPlayerId || !PositionTracker::HasPosition() ||
+            now - g_lastTransform < kTransformIntervalMs)
         {
-            const auto* address = reinterpret_cast<const sockaddr_in*>(item->ai_addr);
-            const std::string candidate = EndpointAddress(*address);
-            if (candidate.rfind("127.", 0) != 0)
-            {
-                selected = candidate;
-                break;
-            }
+            return;
         }
-        freeaddrinfo(results);
-        return selected;
+
+        const auto position = PositionTracker::GetPosition();
+        Packet packet{};
+        packet.Type = PacketType::Transform;
+        packet.PlayerId = g_localPlayerId;
+        packet.Sequence = ++g_sequence;
+        packet.X = position.X;
+        packet.Y = position.Y;
+        packet.Z = position.Z;
+
+        if (g_mode.load(std::memory_order_acquire) == NetworkManager::Mode::Host)
+            BroadcastHostPacket(packet);
+        else if (g_hasServer)
+            SendTo(g_server, packet);
+
+        g_lastTransform = now;
+    }
+
+    void SendHeartbeat(std::uint64_t now)
+    {
+        if (!g_localPlayerId || now - g_lastHeartbeat < kHeartbeatIntervalMs)
+            return;
+
+        Packet ping{};
+        ping.Type = PacketType::Ping;
+        ping.PlayerId = g_localPlayerId;
+        ping.Sequence = ++g_sequence;
+        ping.TimestampMs = now;
+
+        if (g_mode.load(std::memory_order_acquire) == NetworkManager::Mode::Host)
+            BroadcastHostPacket(ping);
+        else if (g_hasServer)
+            SendTo(g_server, ping);
+
+        g_lastHeartbeat = now;
+    }
+
+    void CheckHostTimeouts(std::uint64_t now)
+    {
+        std::vector<std::uint32_t> expired;
+        for (const auto& peer : g_peers)
+        {
+            if (peer.Connected && now - peer.LastSeenMs > kTimeoutMs)
+                expired.push_back(peer.PlayerId);
+        }
+
+        for (const std::uint32_t playerId : expired)
+            RemoveHostPeer(playerId);
     }
 }
 
@@ -504,46 +595,72 @@ namespace NetworkManager
     {
         std::lock_guard<std::mutex> lock(g_mutex);
 
-        WSADATA data{};
-        if (WSAStartup(MAKEWORD(2, 2), &data) == 0)
+        WSADATA winsock{};
+        g_winsockReady = WSAStartup(MAKEWORD(2, 2), &winsock) == 0;
+        if (!g_winsockReady)
         {
-            g_winsockReady = true;
-            ResetSessionLocked();
-            Logger::Write("NetworkManager initialized (UDP protocol v1)");
+            g_status = "Winsock initialization failed";
+            return;
+        }
+
+        ResetSessionState();
+        if (!OpenSocket(0))
+        {
+            g_status = "UDP socket initialization failed";
+            return;
+        }
+
+        const Config::Settings settings = Config::Get();
+        g_port = static_cast<std::uint16_t>(settings.ServerPort);
+
+        if (settings.AutoConnect)
+        {
+            if (!ResolveServer(settings.ServerAddress, g_port))
+            {
+                g_status = "Invalid server address";
+                g_mode.store(Mode::Offline, std::memory_order_release);
+                return;
+            }
+
+            g_mode.store(Mode::Client, std::memory_order_release);
+            g_status = g_autoDiscover
+                ? "Searching for an AmalurCoop host"
+                : "Connecting to AmalurCoop host";
         }
         else
         {
-            g_winsockReady = false;
-            g_status = "Winsock initialization failed";
-            Logger::Write(g_status);
+            g_mode.store(Mode::Offline, std::memory_order_release);
+            g_status = "Offline";
         }
+
+        Logger::Write(g_status);
     }
 
     void Shutdown()
     {
         std::lock_guard<std::mutex> lock(g_mutex);
 
-        if (g_socket != INVALID_SOCKET)
+        if (g_socket != INVALID_SOCKET && g_localPlayerId)
         {
             Packet goodbye{};
             goodbye.Type = PacketType::Goodbye;
             goodbye.PlayerId = g_localPlayerId;
-            if (g_mode.load() == Mode::Host)
-                BroadcastLocked(goodbye);
-            else if (g_mode.load() == Mode::Client && g_hasServerAddress)
-                SendPacketLocked(g_serverAddress, goodbye);
+
+            if (g_mode.load(std::memory_order_acquire) == Mode::Host)
+                BroadcastHostPacket(goodbye);
+            else if (g_hasServer)
+                SendTo(g_server, goodbye);
         }
 
-        RemoveUpnpMapping();
-        ResetSessionLocked();
+        CloseSocket();
+        ResetSessionState();
+        g_mode.store(Mode::Offline, std::memory_order_release);
 
         if (g_winsockReady)
         {
             WSACleanup();
             g_winsockReady = false;
         }
-
-        Logger::Write("NetworkManager shutdown");
     }
 
     void Update()
@@ -561,40 +678,69 @@ namespace NetworkManager
             const int received = recvfrom(
                 g_socket,
                 reinterpret_cast<char*>(&packet),
-                static_cast<int>(sizeof(packet)),
+                sizeof(packet),
                 0,
                 reinterpret_cast<sockaddr*>(&from),
                 &fromSize);
 
             if (received == SOCKET_ERROR)
             {
-                const int error = WSAGetLastError();
-                if (error != WSAEWOULDBLOCK)
-                    g_status = "Receive error: " + std::to_string(error);
+                if (WSAGetLastError() != WSAEWOULDBLOCK)
+                    g_status = "UDP receive error";
                 break;
             }
 
-            if (received == 0)
-                break;
+            if (received != sizeof(packet) ||
+                packet.MagicValue != AmalurNet::Magic ||
+                packet.Version != AmalurNet::ProtocolVersion)
+            {
+                ++g_dropped;
+                continue;
+            }
 
             ++g_packetsReceived;
             g_bytesReceived += static_cast<std::uint64_t>(received);
 
-            if (received != static_cast<int>(sizeof(Packet)) ||
-                packet.Magic != kMagic ||
-                packet.Version != kProtocolVersion)
-            {
-                ++g_droppedPackets;
-                continue;
-            }
-
-            HandlePacketLocked(packet, from);
+            if (g_mode.load(std::memory_order_acquire) == Mode::Host)
+                HandleHostPacket(packet, from);
+            else if (g_mode.load(std::memory_order_acquire) == Mode::Client)
+                HandleClientPacket(packet, from);
         }
 
         const std::uint64_t now = NowMs();
-        SendLocalTransformLocked(now);
-        SendHeartbeatsLocked(now);
-        RemoveTimedOutPeersLocked(now);
+        const Mode mode = g_mode.load(std::memory_order_acquire);
+
+        if (mode == Mode::Client)
+        {
+            SendHello(now);
+            SendLocalTransform(now);
+            SendHeartbeat(now);
+
+            if (g_localPlayerId && now - g_serverLastSeen > kTimeoutMs)
+            {
+                g_localPlayerId = 0;
+                g_peers.clear();
+                g_serverPingMs = 0;
+
+                if (g_autoDiscover)
+                {
+                    g_server.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                    g_status = "Host lost; searching again";
+                }
+                else
+                {
+                    g_status = "Host connection timed out";
+                }
+
+                UpdateLobby();
+            }
+        }
+        else if (mode == Mode::Host)
+        {
+            SendLocalTransform(now);
+            SendHeartbeat(now);
+            CheckHostTimeouts(now);
+        }
     }
 
     bool Host(unsigned short port)
@@ -603,101 +749,53 @@ namespace NetworkManager
         if (!g_winsockReady)
             return false;
 
-        ResetSessionLocked();
-        g_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (g_socket == INVALID_SOCKET)
+        ResetSessionState();
+        g_port = port;
+
+        if (!OpenSocket(port))
         {
-            g_status = "Host failed: socket creation";
+            OpenSocket(0);
+            g_mode.store(Mode::Offline, std::memory_order_release);
+            g_status = "Could not bind UDP port " + std::to_string(port);
+            Logger::Write(Logger::Level::Error, g_status);
             return false;
         }
 
-        BOOL reuse = TRUE;
-        setsockopt(g_socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
-
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_addr.s_addr = htonl(INADDR_ANY);
-        address.sin_port = htons(port);
-
-        if (bind(g_socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR)
-        {
-            const int error = WSAGetLastError();
-            CloseSocketLocked();
-            g_status = "Host failed: bind error " + std::to_string(error);
-            Logger::Write(g_status);
-            return false;
-        }
-
-        u_long nonBlocking = 1;
-        ioctlsocket(g_socket, FIONBIO, &nonBlocking);
-
-        g_mode.store(Mode::Host);
         g_localPlayerId = 1;
-        g_boundPort = port;
-        g_status = "Hosting on " + GetLocalIpv4() + ":" + std::to_string(port);
-        LobbyManager::SetPlayerCount(1);
-        Logger::Write(g_status);
+        g_mode.store(Mode::Host, std::memory_order_release);
+        g_status = "Hosting in-game on UDP " + std::to_string(port);
+        UpdateLobby();
+        Logger::Write(Logger::Level::Success, g_status);
         return true;
     }
 
-    bool Join(const std::string& ip, unsigned short port)
+    bool Join(const std::string& address, unsigned short port)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_winsockReady)
             return false;
 
-        ResetSessionLocked();
-        g_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (g_socket == INVALID_SOCKET)
+        ResetSessionState();
+        g_port = port;
+
+        if (!OpenSocket(0))
         {
-            g_status = "Join failed: socket creation";
+            g_status = "Could not open client UDP socket";
+            g_mode.store(Mode::Offline, std::memory_order_release);
             return false;
         }
 
-        sockaddr_in local{};
-        local.sin_family = AF_INET;
-        local.sin_addr.s_addr = htonl(INADDR_ANY);
-        local.sin_port = htons(0); // ephemeral port allows two instances on one PC
-        if (bind(g_socket, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == SOCKET_ERROR)
+        if (!ResolveServer(address, port))
         {
-            CloseSocketLocked();
-            g_status = "Join failed: local bind";
+            g_status = "Invalid host address";
+            g_mode.store(Mode::Offline, std::memory_order_release);
             return false;
         }
 
-        u_long nonBlocking = 1;
-        ioctlsocket(g_socket, FIONBIO, &nonBlocking);
-
-        g_serverAddress = {};
-        g_serverAddress.sin_family = AF_INET;
-        g_serverAddress.sin_port = htons(port);
-
-        if (inet_pton(AF_INET, ip.c_str(), &g_serverAddress.sin_addr) != 1)
-        {
-            addrinfo hints{};
-            hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_DGRAM;
-            addrinfo* results = nullptr;
-            if (getaddrinfo(ip.c_str(), nullptr, &hints, &results) != 0 || !results)
-            {
-                CloseSocketLocked();
-                g_status = "Join failed: invalid address";
-                return false;
-            }
-            g_serverAddress.sin_addr = reinterpret_cast<sockaddr_in*>(results->ai_addr)->sin_addr;
-            freeaddrinfo(results);
-        }
-
-        g_hasServerAddress = true;
-        g_mode.store(Mode::Client);
-        g_boundPort = port;
-
-        Packet hello{};
-        hello.Type = PacketType::Hello;
-        hello.Sequence = ++g_sendSequence;
-        SendPacketLocked(g_serverAddress, hello);
-
-        g_status = "Connecting to " + ip + ":" + std::to_string(port);
+        g_mode.store(Mode::Client, std::memory_order_release);
+        g_status = g_autoDiscover
+            ? "Searching for an AmalurCoop host"
+            : "Connecting to " + address + ":" + std::to_string(port);
         Logger::Write(g_status);
         return true;
     }
@@ -706,110 +804,28 @@ namespace NetworkManager
     {
         std::lock_guard<std::mutex> lock(g_mutex);
 
-        if (g_socket != INVALID_SOCKET)
+        if (g_socket != INVALID_SOCKET && g_localPlayerId)
         {
             Packet goodbye{};
             goodbye.Type = PacketType::Goodbye;
             goodbye.PlayerId = g_localPlayerId;
-            if (g_mode.load() == Mode::Host)
-                BroadcastLocked(goodbye);
-            else if (g_mode.load() == Mode::Client && g_hasServerAddress)
-                SendPacketLocked(g_serverAddress, goodbye);
+
+            if (g_mode.load(std::memory_order_acquire) == Mode::Host)
+                BroadcastHostPacket(goodbye);
+            else if (g_hasServer)
+                SendTo(g_server, goodbye);
         }
 
-        RemoveUpnpMapping();
-        ResetSessionLocked();
-        Logger::Write("Network disconnected");
-    }
-
-    bool TryMapPortUpnp(unsigned short port)
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-#if AMALUR_HAS_NATUPNP
-        RemoveUpnpMapping();
-
-        const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        const bool shouldUninitialize = SUCCEEDED(init);
-
-        IUPnPNAT* nat = nullptr;
-        IStaticPortMappingCollection* mappings = nullptr;
-        IStaticPortMapping* mapping = nullptr;
-
-        HRESULT hr = CoCreateInstance(
-            __uuidof(UPnPNAT),
-            nullptr,
-            CLSCTX_INPROC_SERVER,
-            __uuidof(IUPnPNAT),
-            reinterpret_cast<void**>(&nat));
-
-        if (SUCCEEDED(hr) && nat)
-            hr = nat->get_StaticPortMappingCollection(&mappings);
-
-        const std::string localIp = GetLocalIpv4();
-        BSTR protocol = SysAllocString(L"UDP");
-        wchar_t localIpWide[64]{};
-        MultiByteToWideChar(CP_UTF8, 0, localIp.c_str(), -1, localIpWide, static_cast<int>(_countof(localIpWide)));
-        BSTR client = SysAllocString(localIpWide);
-        BSTR description = SysAllocString(L"AmalurCoop UDP Host");
-
-        if (SUCCEEDED(hr) && mappings)
-        {
-            hr = mappings->Add(
-                port,
-                protocol,
-                port,
-                client,
-                VARIANT_TRUE,
-                description,
-                &mapping);
-        }
-
-        if (protocol) SysFreeString(protocol);
-        if (client) SysFreeString(client);
-        if (description) SysFreeString(description);
-        if (mappings) mappings->Release();
-        if (nat) nat->Release();
-        if (shouldUninitialize) CoUninitialize();
-
-        if (SUCCEEDED(hr) && mapping)
-        {
-            g_upnpMapping = mapping;
-            g_upnpMapped = true;
-            g_upnpPort = port;
-            g_upnpStatus = "UPnP mapped UDP " + std::to_string(port);
-            Logger::Write(g_upnpStatus);
-            return true;
-        }
-
-        if (mapping) mapping->Release();
-        g_upnpMapped = false;
-        g_upnpStatus = "UPnP unavailable; forward UDP " + std::to_string(port) + " manually";
-        Logger::Write(g_upnpStatus);
-        return false;
-#else
-        (void)port;
-        g_upnpMapped = false;
-        g_upnpStatus = "UPnP SDK header unavailable";
-        return false;
-#endif
-    }
-
-    void RemoveUpnpMapping()
-    {
-#if AMALUR_HAS_NATUPNP
-        if (g_upnpMapping)
-        {
-            g_upnpMapping->Release();
-            g_upnpMapping = nullptr;
-        }
-#endif
-        g_upnpMapped = false;
-        g_upnpPort = 0;
+        ResetSessionState();
+        OpenSocket(0);
+        g_mode.store(Mode::Offline, std::memory_order_release);
+        g_status = "Disconnected";
+        UpdateLobby();
     }
 
     Mode GetMode()
     {
-        return g_mode.load();
+        return g_mode.load(std::memory_order_acquire);
     }
 
     std::string GetStatusText()
@@ -820,59 +836,126 @@ namespace NetworkManager
 
     std::string GetModeText()
     {
-        switch (g_mode.load())
+        switch (g_mode.load(std::memory_order_acquire))
         {
-        case Mode::Host: return "HOST";
-        case Mode::Client: return "CLIENT";
-        default: return "OFFLINE";
+        case Mode::Host:
+            return "HOST";
+        case Mode::Client:
+            return "CLIENT";
+        default:
+            return "OFFLINE";
         }
     }
 
     Stats GetStats()
     {
         std::lock_guard<std::mutex> lock(g_mutex);
+
         Stats stats{};
         stats.PacketsSent = g_packetsSent;
         stats.PacketsReceived = g_packetsReceived;
         stats.BytesSent = g_bytesSent;
         stats.BytesReceived = g_bytesReceived;
-        stats.DroppedPackets = g_droppedPackets;
+        stats.DroppedPackets = g_dropped;
         stats.LocalPlayerId = g_localPlayerId;
-        stats.BoundPort = g_boundPort;
-        stats.UpnpMapped = g_upnpMapped;
-        stats.UpnpStatus = g_upnpStatus;
+        stats.BoundPort = g_port;
+
+        if (g_mode.load(std::memory_order_acquire) == Mode::Client)
+            stats.CurrentPingMs = g_serverPingMs;
 
         for (const auto& peer : g_peers)
         {
-            if (peer.Connected)
+            if (!peer.Connected)
+                continue;
+
+            ++stats.ConnectedPeers;
+            if (g_mode.load(std::memory_order_acquire) == Mode::Host &&
+                peer.PingMs &&
+                (!stats.CurrentPingMs || peer.PingMs < stats.CurrentPingMs))
             {
-                ++stats.ConnectedPeers;
-                if (stats.CurrentPingMs == 0 || peer.PingMs < stats.CurrentPingMs)
-                    stats.CurrentPingMs = peer.PingMs;
+                stats.CurrentPingMs = peer.PingMs;
             }
         }
+
         return stats;
     }
 
     std::vector<PeerInfo> GetPeers()
     {
         std::lock_guard<std::mutex> lock(g_mutex);
-        std::vector<PeerInfo> result;
-        result.reserve(g_peers.size());
+
+        std::vector<PeerInfo> peers;
+        peers.reserve(g_peers.size());
+
         for (const auto& peer : g_peers)
         {
             PeerInfo info{};
             info.PlayerId = peer.PlayerId;
-            info.Address = EndpointAddress(peer.Endpoint);
-            info.Port = ntohs(peer.Endpoint.sin_port);
             info.PingMs = peer.PingMs;
             info.LastSeenMs = peer.LastSeenMs;
             info.Connected = peer.Connected;
             info.HasTransform = peer.HasTransform;
             info.Position = peer.Position;
-            result.push_back(info);
+
+            if (peer.HasAddress)
+            {
+                info.Address = AddressText(peer.Address);
+                info.Port = ntohs(peer.Address.sin_port);
+            }
+            else if (g_mode.load(std::memory_order_acquire) == Mode::Client)
+            {
+                info.Address = "via host";
+                info.Port = g_port;
+            }
+
+            peers.push_back(std::move(info));
         }
-        return result;
+
+        return peers;
+    }
+
+    std::uint32_t GetLocalPlayerId()
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return g_localPlayerId;
+    }
+
+    bool SendMotionEvent(const MotionEventPacket& event)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_localPlayerId)
+            return false;
+
+        Packet packet{};
+        packet.Type = PacketType::MotionEvent;
+        packet.PlayerId = g_localPlayerId;
+        packet.Sequence = ++g_sequence;
+        packet.MotionHash = event.MotionHash;
+        packet.RequestedVariant = event.RequestedVariant;
+        packet.ParameterA = event.ParameterA;
+        packet.ParameterB = event.ParameterB;
+        packet.SenderTick = event.SenderTick;
+        packet.PacketSequence = event.PacketSequence ? event.PacketSequence : packet.Sequence;
+        packet.FlagA = event.FlagA;
+
+        if (g_mode.load(std::memory_order_acquire) == Mode::Host)
+        {
+            BroadcastHostPacket(packet);
+            return true;
+        }
+
+        return g_hasServer && SendTo(g_server, packet);
+    }
+
+    bool PopMotionEvent(MotionEventPacket& event)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_motionQueue.empty())
+            return false;
+
+        event = g_motionQueue.front();
+        g_motionQueue.pop_front();
+        return true;
     }
 
     bool HasRemoteTransform()
@@ -904,7 +987,7 @@ namespace NetworkManager
         for (const auto& peer : g_peers)
         {
             if (peer.Connected && peer.HasTransform)
-                return now >= peer.LastSeenMs ? now - peer.LastSeenMs : 0;
+                return now - peer.LastSeenMs;
         }
         return 0;
     }

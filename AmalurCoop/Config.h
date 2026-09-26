@@ -5,6 +5,9 @@ namespace Config
     struct Settings
     {
         int MaxPlayers = 4;
+        bool AutoConnect = true;
+        char ServerAddress[64] = "auto";
+        int ServerPort = 7777;
         bool EnableScaling = true;
 
         float BossHealthPerExtraPlayer = 0.65f;

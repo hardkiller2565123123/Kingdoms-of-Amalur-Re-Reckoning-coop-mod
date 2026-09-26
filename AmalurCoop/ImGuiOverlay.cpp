@@ -13,6 +13,7 @@
 #include "Logger.h"
 #include "MemoryScanner.h"
 #include "MinHook.h"
+#include "MotionReplication.h"
 #include "NetworkManager.h"
 #include "PositionTracker.h"
 #include "RemotePlayerManager.h"
@@ -355,10 +356,7 @@ namespace
         g_networkPort = std::clamp(g_networkPort, 1, 65535);
 
         if (ImGui::Button("Host session", ImVec2(150.0f, 34.0f)))
-        {
-            if (NetworkManager::Host(static_cast<unsigned short>(g_networkPort)))
-                NetworkManager::TryMapPortUpnp(static_cast<unsigned short>(g_networkPort));
-        }
+            NetworkManager::Host(static_cast<unsigned short>(g_networkPort));
 
         ImGui::SameLine();
         if (ImGui::Button("Join session", ImVec2(150.0f, 34.0f)))
@@ -370,17 +368,7 @@ namespace
 
         ImGui::Spacing();
         ImGui::TextDisabled("Two-instance test: host one game, then join 127.0.0.1 from the second game using the same UDP port.");
-        ImGui::TextDisabled("Internet play: UPnP is attempted automatically. If unavailable, forward this UDP port in the router and allow DINPUT8.dll/koa.exe through Windows Firewall.");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextUnformatted("Port reachability");
-        ImGui::Text("UPnP: %s", stats.UpnpStatus.empty() ? "Not requested" : stats.UpnpStatus.c_str());
-        if (mode == NetworkManager::Mode::Host && !stats.UpnpMapped)
-        {
-            if (ImGui::Button("Retry UPnP mapping"))
-                NetworkManager::TryMapPortUpnp(static_cast<unsigned short>(g_networkPort));
-        }
+        ImGui::TextDisabled("Internet play: forward the selected UDP port to the host PC and allow DINPUT8.dll/koa.exe through Windows Firewall.");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -450,6 +438,102 @@ namespace
         }
     }
 
+    void RenderMotionDebug()
+    {
+        const MotionReplication::Stats stats = MotionReplication::GetStats();
+        const bool hasController = stats.ControllerComponentIndex >= 0;
+        const bool hasReplayController = stats.LastRemoteController != 0;
+
+        ImGui::TextColored(ImVec4(1.0f, 0.58f, 0.16f, 1.0f), "MOTION REPLICATION");
+        ImGui::SameLine();
+        ImGui::TextDisabled("sub_D1D840 event path");
+        ImGui::Separator();
+
+        if (ImGui::BeginTable("##motionCards", 4, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableNextColumn();
+            StatusCard("##motionHook", "Hook", stats.HookInstalled ? "Installed" : "Unavailable", stats.HookInstalled);
+
+            ImGui::TableNextColumn();
+            StatusCard(
+                "##motionSlot",
+                "Controller slot",
+                hasController ? std::to_string(stats.ControllerComponentIndex) : "--",
+                hasController);
+
+            ImGui::TableNextColumn();
+            StatusCard("##motionSent", "Sent", std::to_string(stats.SentPackets), stats.SentPackets > 0);
+
+            ImGui::TableNextColumn();
+            StatusCard("##motionReplay", "Replayed", std::to_string(stats.ReplayCount), stats.ReplayCount > 0);
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::Text("Status: %s", stats.Status.empty() ? "--" : stats.Status.c_str());
+        ImGui::Text("Local controller: 0x%08X", static_cast<unsigned int>(stats.LocalController));
+        ImGui::Text("Remote controller: 0x%08X", static_cast<unsigned int>(stats.LastRemoteController));
+        ImGui::Text("Actor states: local %d   remote %d", stats.LocalActorStateIndex, stats.RemoteActorStateIndex);
+        ImGui::Text("Actor-state entries: local 0x%08X   remote 0x%08X",
+            static_cast<unsigned int>(stats.LocalActorStateEntry),
+            static_cast<unsigned int>(stats.RemoteActorStateEntry));
+        ImGui::Text("Remote component 7: 0x%08X   state handle: 0x%08X",
+            static_cast<unsigned int>(stats.RemoteActorStateComponent),
+            stats.RemoteActorStateHandle);
+
+        if (ImGui::BeginTable("##motionControllerState", 4,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableSetupColumn("Controller");
+            ImGui::TableSetupColumn("Queue +14");
+            ImGui::TableSetupColumn("A8 / AC");
+            ImGui::TableSetupColumn("B4");
+            ImGui::TableHeadersRow();
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("Local 0x%08X", static_cast<unsigned int>(stats.LocalController));
+            ImGui::TableNextColumn(); ImGui::Text("0x%08X", static_cast<unsigned int>(stats.LocalControllerQueue));
+            ImGui::TableNextColumn(); ImGui::Text("%08X / %08X", stats.LocalControllerA8, stats.LocalControllerAC);
+            ImGui::TableNextColumn(); ImGui::Text("%08X", stats.LocalControllerB4);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("Remote 0x%08X", static_cast<unsigned int>(stats.LastRemoteController));
+            ImGui::TableNextColumn(); ImGui::Text("0x%08X", static_cast<unsigned int>(stats.RemoteControllerQueue));
+            ImGui::TableNextColumn(); ImGui::Text("%08X / %08X", stats.RemoteControllerA8, stats.RemoteControllerAC);
+            ImGui::TableNextColumn(); ImGui::Text("%08X", stats.RemoteControllerB4);
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (ImGui::BeginTable("##motionCounters", 6,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableSetupColumn("Last hash");
+            ImGui::TableSetupColumn("Sequence");
+            ImGui::TableSetupColumn("Sent");
+            ImGui::TableSetupColumn("Received");
+            ImGui::TableSetupColumn("Dropped");
+            ImGui::TableSetupColumn("Replay");
+            ImGui::TableHeadersRow();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("0x%08X", stats.LastHash);
+            ImGui::TableNextColumn(); ImGui::Text("%u", stats.LastSequence);
+            ImGui::TableNextColumn(); ImGui::Text("%llu", static_cast<unsigned long long>(stats.SentPackets));
+            ImGui::TableNextColumn(); ImGui::Text("%llu", static_cast<unsigned long long>(stats.ReceivedPackets));
+            ImGui::TableNextColumn(); ImGui::Text("%llu", static_cast<unsigned long long>(stats.DroppedPackets));
+            ImGui::TableNextColumn(); ImGui::Text("%llu", static_cast<unsigned long long>(stats.ReplayCount));
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(
+            hasReplayController ? ImVec4(0.35f, 0.90f, 0.48f, 1.0f) : ImVec4(0.95f, 0.78f, 0.34f, 1.0f),
+            "%s",
+            hasReplayController ? "Remote replay target resolved" : "Remote replay target pending");
+    }
+
     void RenderScaling()
     {
         Config::Settings settings = Config::Get();
@@ -502,6 +586,8 @@ namespace
             row("Player manager", PositionTracker::GetPlayerManager());
             row("Player context", PositionTracker::GetPlayerContext());
             row("Object handle", PositionTracker::GetObjectHandle());
+            row("Definition handle", PositionTracker::GetDefinitionHandle());
+            row("Player setup +0x2BC", PositionTracker::GetPlayerSetupValue());
             row("Runtime object", PositionTracker::GetRuntimeObject());
             row("Transform component", PositionTracker::GetTransformComponent());
             ImGui::EndTable();
@@ -527,12 +613,48 @@ namespace
 
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextUnformatted("Visible two-player proxy");
-        ImGui::TextWrapped("When a network peer sends transforms, AmalurCoop now queues one inactive game-managed actor record and moves that actor through the verified sub_F5DD50 transform path.");
+        ImGui::TextUnformatted("Player-style remote proxy");
+        ImGui::TextWrapped("Remote actors now use the game's player-style FC6170 -> F86E20 spawn path with the local player definition descriptors. The old FC6220 stack/entity duplication path is no longer used for remote players.");
         ImGui::Text("Status: %s", RemotePlayerManager::GetStatusText().c_str());
-        ImGui::Text("Proxy handle: 0x%08X", RemotePlayerManager::GetProxyObjectHandle());
 
-        if (ImGui::Button("Spawn visible test proxy near local player"))
+        const RemotePlayerManager::ProxyDiagnostics proxy = RemotePlayerManager::GetFirstProxyDiagnostics();
+        if (proxy.ObjectHandle)
+        {
+            if (ImGui::BeginTable("##proxyRuntime", 2,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+            {
+                auto proxyRow = [](const char* name, uintptr_t value)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(name);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("0x%08X", static_cast<unsigned int>(value));
+                };
+
+                proxyRow("Object handle", proxy.ObjectHandle);
+                proxyRow("Persistent actor handle", proxy.PersistentActorHandle);
+                proxyRow("Definition handle", proxy.DefinitionHandle);
+                proxyRow("Runtime object", proxy.RuntimeObject);
+                proxyRow("Component 6 / transform", proxy.TransformComponent);
+                proxyRow("Component 7 / actor state", proxy.ActorStateComponent);
+                proxyRow("Component 15 / candidate visual", proxy.AppearanceComponent);
+                proxyRow("Actor-state handle", proxy.ActorStateHandle);
+                proxyRow("Actor-state entry", proxy.ActorStateEntry);
+                ImGui::EndTable();
+            }
+
+            ImGui::Text("Safe proxy post-setup: %s", proxy.PlayerPostSetupApplied ? "applied" : "partial/pending");
+            ImGui::Text("Actor-state entry: %s", proxy.ActorStateResolved ? "resolved" : "pending");
+            if (!proxy.SpawnStatus.empty())
+                ImGui::TextWrapped("Spawn detail: %s", proxy.SpawnStatus.c_str());
+        }
+        else
+        {
+            ImGui::TextDisabled("No player-style proxy is active yet.");
+        }
+
+        if (ImGui::Button("Spawn player-style test proxy near local player"))
             RemotePlayerManager::SpawnDummyNearLocalPlayer();
 
         ImGui::SameLine();
@@ -1083,6 +1205,7 @@ namespace
             if (ImGui::BeginTabItem("Dashboard")) { RenderDashboard(); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Lobby")) { RenderLobby(); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Network")) { RenderNetwork(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Motion")) { RenderMotionDebug(); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Scaling")) { RenderScaling(); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Player")) { RenderPlayer(); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem("Runtime")) { RenderRuntime(); ImGui::EndTabItem(); }

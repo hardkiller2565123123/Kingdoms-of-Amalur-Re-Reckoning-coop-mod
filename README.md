@@ -1,40 +1,75 @@
 # AmalurCoop
 
-Open-source experimental multiplayer prototype for **Kingdoms of Amalur: Re-Reckoning**.
+<p align="center">
+  <img src="https://www.dsogaming.com/wp-content/uploads/2020/09/KOARR_Gorhart.jpg" alt="AmalurCoop Multiplayer Screenshot" width="100%">
+</p>
 
-## Current status
+<p align="center">
+  <strong>Open-source experimental multiplayer prototype for <em>Kingdoms of Amalur: Re-Reckoning</em>.</strong>
+</p>
 
-The prototype currently supports:
+---
 
-- Host/client UDP sessions
-- Two connected game instances
-- Local player transform replication
-- Direct creation of a visible remote proxy actor
-- Remote proxy position updates in the same loaded area
-- F1 ImGui diagnostics and session controls
+## Current Status
 
-The visible proxy is still an early research actor. Its appearance, materials, animation, equipment, AI suppression, combat, quests, and world transitions are not complete.
+AmalurCoop is an early multiplayer research project focused on bringing cooperative play to **Kingdoms of Amalur: Re-Reckoning** while keeping the original gameplay experience intact.
+IM STARTING THIS PROJECT BACK UP NEW UPDATE SOOON
 
-## Repository layout
+### Currently Working
+
+- ✅ Host/client UDP networking
+- ✅ Local player transform replication
+- ✅ Visible remote player proxy
+- ✅ Real-time position synchronization
+- ✅ F1 ImGui debug and networking interface
+- ✅ Basic connection diagnostics
+- ✅ Both player walking around. (no animation)
+
+The screenshot above shows two connected game instances with a synchronized remote player prototype.
+
+---
+
+## Work In Progress
+
+The current proxy actor is only a placeholder. The following systems are still under development:
+
+- Character appearance
+- Materials and shaders
+- Animation synchronization
+- Equipment replication
+- Weapon replication
+- Combat synchronization
+- Health and damage replication
+- Enemy synchronization
+- Quest synchronization
+- Inventory synchronization
+- Dialogue synchronization
+- World transitions
+- Death and respawning
+- Stable multiplayer sessions
+
+---
 
 ```text
 AmalurCoop.slnx
 AmalurCoop/       Main DINPUT8 proxy and multiplayer prototype
+steam_api/        Auxiliary Steam API proxy project
 ```
 
-## Build
+1. Open **AmalurCoop.slnx** in Visual Studio 2022.
+2. Select the **Win32** platform.
+3. Build the **Release** configuration.
+4. Copy the generated DLL and required files into the game directory.
+5. Launch the game and press **F1** to open the multiplayer debug menu.
 
-1. Open `AmalurCoop.slnx` in Visual Studio 2022.
-2. Select **Win32** for the game-compatible build.
-3. Build the `AmalurCoop` project in Release mode.
-4. Copy the resulting proxy DLL and required dependencies to the game directory for testing.
+---
 
-This project does not include game files. You must own the game.
+## Requirements
 
-## Scope
+- Visual Studio 2022
+- A legitimate copy of **Kingdoms of Amalur: Re-Reckoning**
 
-This project is intended for offline/private cooperative research and modding. It does not support cheating in official online services.
+This repository does **not** include any game assets or copyrighted files.
 
-## License
+---
 
-MIT. See [LICENSE](LICENSE).

@@ -50,11 +50,6 @@ The current proxy actor is only a placeholder. The following systems are still u
 
 ---
 
-```text
-AmalurCoop.slnx
-AmalurCoop/       Main DINPUT8 proxy and multiplayer prototype
-steam_api/        Auxiliary Steam API proxy project
-```
 
 1. Open **AmalurCoop.slnx** in Visual Studio 2022.
 2. Select the **Win32** platform.

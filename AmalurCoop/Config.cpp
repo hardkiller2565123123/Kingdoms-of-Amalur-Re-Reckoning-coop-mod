@@ -44,6 +44,8 @@ namespace
         value.BossDamagePerExtraPlayer = std::clamp(value.BossDamagePerExtraPlayer, 0.0f, 5.0f);
         value.EnemyDamagePerExtraPlayer = std::clamp(value.EnemyDamagePerExtraPlayer, 0.0f, 5.0f);
         value.MenuScale = std::clamp(value.MenuScale, 0.75f, 1.75f);
+        value.ForegroundFPS = std::clamp(value.ForegroundFPS, 0, 240);
+        value.BackgroundFPS = std::clamp(value.BackgroundFPS, 0, 240);
         return value;
     }
 
@@ -84,6 +86,8 @@ namespace Config
         loaded.CaptureInput = ReadInt("Interface", "CaptureInput", ToIniBool(loaded.CaptureInput)) != 0;
         loaded.ForceCursorVisible = ReadInt("Interface", "ForceCursorVisible", ToIniBool(loaded.ForceCursorVisible)) != 0;
         loaded.MenuScale = ReadFloat("Interface", "MenuScale", loaded.MenuScale);
+        loaded.ForegroundFPS = ReadInt("Performance", "ForegroundFPS", loaded.ForegroundFPS);
+        loaded.BackgroundFPS = ReadInt("Performance", "BackgroundFPS", loaded.BackgroundFPS);
 
         loaded.AutoScanOnStartup = ReadInt("Debug", "AutoScanOnStartup", ToIniBool(loaded.AutoScanOnStartup)) != 0;
         loaded.DebugConsoleOnStartup = ReadInt("Debug", "ConsoleOnStartup", ToIniBool(loaded.DebugConsoleOnStartup)) != 0;
@@ -120,6 +124,8 @@ namespace Config
         WriteInt("Interface", "CaptureInput", ToIniBool(value.CaptureInput));
         WriteInt("Interface", "ForceCursorVisible", ToIniBool(value.ForceCursorVisible));
         WriteFloat("Interface", "MenuScale", value.MenuScale);
+        WriteInt("Performance", "ForegroundFPS", value.ForegroundFPS);
+        WriteInt("Performance", "BackgroundFPS", value.BackgroundFPS);
 
         WriteInt("Debug", "AutoScanOnStartup", ToIniBool(value.AutoScanOnStartup));
         WriteInt("Debug", "ConsoleOnStartup", ToIniBool(value.DebugConsoleOnStartup));

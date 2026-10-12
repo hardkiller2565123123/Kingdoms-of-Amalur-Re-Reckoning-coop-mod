@@ -1,6 +1,8 @@
 #include "RemotePlayerManager.h"
 
 #include "EngineRuntime.h"
+#include "NativeVisualCalls.h"
+#include <cmath>
 #include "Logger.h"
 #include "MotionReplication.h"
 #include "NetworkManager.h"
@@ -134,6 +136,19 @@ namespace
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    void RefreshRenderTransform(uintptr_t rendering)
+    {
+        if (!EngineRuntime::IsActiveComponent(rendering)) return;
+        __try
+        {
+            // Publish the corrected C6 transform into the render tree now,
+            // including frames when the ordinary component scheduler is paused.
+            NativeVisualCalls::UpdateWorldTransform(EngineRuntime::RuntimeAddress(0x00F3DBD0),
+                reinterpret_cast<void*>(rendering));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
 
     void ClearProxyRuntime(Proxy& proxy)
@@ -541,8 +556,6 @@ namespace RemotePlayerManager
         if (!UpdateWorldGate())
             return;
 
-        MotionReplication::PumpRemoteMotionOnGameThread();
-
         if (g_spawnInProgress.exchange(true, std::memory_order_acq_rel))
             return;
 
@@ -561,6 +574,8 @@ namespace RemotePlayerManager
 
         g_spawnInProgress.store(false, std::memory_order_release);
         PlayerLifecycleSync::PumpGameThread();
+        // Replay against the final controller, after spawning/appearance loads.
+        MotionReplication::PumpRemoteMotionOnGameThread();
     }
 
     void Update()
@@ -681,8 +696,21 @@ namespace RemotePlayerManager
             const auto handle = GetProxyObjectHandle(move.PlayerId);
             const auto runtime = EngineRuntime::ResolveActorHandle(handle);
             if (!runtime || EngineRuntime::GetComponent(runtime, 6) != move.Transform) continue;
-            if (move.HasRotation) ApplyRotation(move.Transform, move.Rotation);
-            MoveProxy(move.PlayerId, move.Transform, move.Target);
+            float current[8]{};
+            if (!EngineRuntime::ReadBytes(move.Transform + 0x24, current, sizeof(current))) continue;
+            const bool moved = std::fabs(current[0] - move.Target.X) > 0.01f ||
+                std::fabs(current[1] - move.Target.Y) > 0.01f || std::fabs(current[2] - move.Target.Z) > 0.01f;
+            float rotationDelta = 0, oppositeDelta = 0;
+            for (unsigned i = 0; i < 4; ++i)
+            {
+                rotationDelta += std::fabs(current[4 + i] - move.Rotation[i]);
+                oppositeDelta += std::fabs(current[4 + i] + move.Rotation[i]);
+            }
+            const bool turned = move.HasRotation && rotationDelta > 0.0001f && oppositeDelta > 0.0001f;
+            if (turned) ApplyRotation(move.Transform, move.Rotation);
+            if (moved) MoveProxy(move.PlayerId, move.Transform, move.Target);
+            if (moved || turned)
+                RefreshRenderTransform(EngineRuntime::GetComponent(runtime, 7));
         }
     }
 

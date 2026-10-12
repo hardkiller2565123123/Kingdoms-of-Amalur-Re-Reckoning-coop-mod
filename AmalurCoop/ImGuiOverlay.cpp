@@ -1,3 +1,4 @@
+#include "WindowFocusPolicy.h"
 #include "ImGuiOverlay.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -27,6 +28,7 @@
 #include "imgui_impl_win32.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <atomic>
 #include <cstdio>
@@ -152,8 +154,9 @@ namespace
     void ReconcileCursor()
     {
         const Config::Settings settings = Config::Get();
+        if (GetForegroundWindow() != g_gameWindow) ClipCursor(nullptr);
         const bool shouldForce =
-            g_menuOpen.load() &&
+            g_menuOpen.load() && GetForegroundWindow() == g_gameWindow &&
             settings.ForceCursorVisible;
 
         if (shouldForce && g_cursorShowCalls == 0)
@@ -191,6 +194,13 @@ namespace
             ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam);
 
 
+        if (WindowFocusPolicy::IsAutomaticDeactivation(message, wParam))
+        {
+            ClipCursor(nullptr);
+            // Native WndProc 1073E30 clears its active flag on WM_KILLFOCUS.
+            // Bypass only deactivation; default OS handling still runs.
+            return DefWindowProcW(window, message, wParam, lParam);
+        }
         if (g_menuOpen.load() && Config::Get().CaptureInput && IsInputMessage(message))
             return 1;
 
@@ -1345,9 +1355,25 @@ namespace
 
     HRESULT WINAPI HookedPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
     {
+        if (flags & DXGI_PRESENT_TEST)
+            return g_originalPresent ? g_originalPresent(swapChain, syncInterval, flags) : S_OK;
         std::lock_guard<std::recursive_mutex> lock(g_renderMutex);
+        using FrameClock = std::chrono::steady_clock;
+        static auto lastFrame = FrameClock::now();
+        const auto settings = Config::Get();
+        const bool foreground = GetForegroundWindow() == g_gameWindow;
+        const int fpsLimit = foreground ? settings.ForegroundFPS : settings.BackgroundFPS;
+        if (fpsLimit > 0)
+        {
+            const auto remaining = std::chrono::duration<double>(1.0 / fpsLimit) - (FrameClock::now() - lastFrame);
+            const auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(remaining).count();
+            if (waitMs > 0) Sleep(static_cast<DWORD>(waitMs));
+        }
+        lastFrame = FrameClock::now();
+        const auto workStart = lastFrame;
 
-        const bool f1Down = (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
+        const bool f1Down = GetForegroundWindow() == g_gameWindow &&
+            (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
         if (f1Down && !g_f1WasDown)
             SetMenuOpenInternal(!g_menuOpen.load());
         g_f1WasDown = f1Down;
@@ -1362,9 +1388,9 @@ namespace
         RemotePlayerManager::Update();
         RemotePlayerManager::PumpGameThread();
 
-        if (g_rendererReady.load() && g_renderTarget)
+        ReconcileCursor();
+        if (g_rendererReady.load() && g_renderTarget && g_menuOpen.load())
         {
-            ReconcileCursor();
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
@@ -1374,10 +1400,32 @@ namespace
                 RenderMenu();
 
             ImGui::Render();
+            // OM is changed before ImGui's own state backup, so restore the
+            // game's render/depth targets explicitly after drawing the overlay.
+            ID3D11RenderTargetView* previousTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+            ID3D11DepthStencilView* previousDepth = nullptr;
+            g_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, previousTargets, &previousDepth);
             g_context->OMSetRenderTargets(1, &g_renderTarget, nullptr);
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, previousTargets, previousDepth);
+            for (auto* target : previousTargets) if (target) target->Release();
+            if (previousDepth) previousDepth->Release();
         }
 
+        // Exclude our intentional frame cap and the driver's Present wait.
+        static double totalWorkMs = 0, peakWorkMs = 0;
+        static unsigned measuredFrames = 0;
+        static auto lastReport = FrameClock::now();
+        const auto workEnd = FrameClock::now();
+        const double workMs = std::chrono::duration<double, std::milli>(workEnd - workStart).count();
+        totalWorkMs += workMs; peakWorkMs = (std::max)(peakWorkMs, workMs); ++measuredFrames;
+        if (workEnd - lastReport >= std::chrono::seconds(5))
+        {
+            Logger::WriteFormat(Logger::Level::Debug,
+                "Mod frame work avg=%.3fms peak=%.3fms frames=%u focus=%s cap=%d",
+                totalWorkMs / measuredFrames, peakWorkMs, measuredFrames, foreground ? "foreground" : "background", fpsLimit);
+            totalWorkMs = peakWorkMs = 0; measuredFrames = 0; lastReport = workEnd;
+        }
         return g_originalPresent ? g_originalPresent(swapChain, syncInterval, flags) : S_OK;
     }
 

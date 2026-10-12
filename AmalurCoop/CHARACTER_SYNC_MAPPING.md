@@ -1,3 +1,5 @@
+> Crash-fix update: F3DBD0 consumes one unused 32-bit stack argument (RET 4). Its old zero-argument call was wrong and is now corrected. Native stack regression and /RTC1 wrapper tests pass. See research/STACK_ABI_FIX.md; the installation/hash information below describes the earlier candidate.
+
 # Character synchronization mapping and build report
 
 Source executable: `koa.exe`, 32-bit image base `0x00400000`.

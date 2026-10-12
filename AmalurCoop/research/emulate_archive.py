@@ -47,6 +47,9 @@ def hook(uc,address,size,user):
   # Empty override vector in this fixture; consume its native uint32 count.
   stream=r(sp+4);assert r(r(stream+8)+r(stream+0x10))==0
   w(stream+0x10,r(stream+0x10)+4);ret(0,4)
+ elif address==0xF24EF0:
+  w(cx+4,0);ret(cx,8) # no Location component for callback fixture
+ elif address==0xF26D60:ret() # final renderer update is outside this ABI test
  elif address==0x4024000:ret(0,4) # asset reference-count operation
 u.hook_add(UC_HOOK_CODE,hook)
 def call(addr,this,args):
@@ -55,6 +58,7 @@ def call(addr,this,args):
  u.reg_write(UC_X86_REG_ESP,stack);u.reg_write(UC_X86_REG_ECX,this)
  u.emu_start(addr,stop,count=500000)
  assert u.reg_read(UC_X86_REG_EIP)==stop,hex(u.reg_read(UC_X86_REG_EIP))
+ assert u.reg_read(UC_X86_REG_ESP)==stack+4+len(args)*4, 'native stack argument count mismatch'
 call(0xF11950,render,[archive,0])
 size=r(archive+0x10);raw=bytes(u.mem_read(buffer,size));assert r(archive+0x18)==0
 assert raw[:9]==struct.pack('<IBI',0x712123,0,len(raw)-9)
@@ -76,3 +80,14 @@ assert r(archive+0x18)==0
 assert r(render+0x9c)==3
 assert bytes(u.mem_read(actor+0x124,45))==bytes(range(45))
 print('PASS native F1DA50 -> D3E5E0 -> D3E3D0 reader, no motion chunk, new independent render handle')
+
+# Exercise the actual callback epilogue, omitted by the original archive test.
+try:
+ call(0xF3DBD0,render,[])
+except AssertionError as error:
+ assert str(error)=='native stack argument count mismatch'
+ print('PASS regression reproduced: old zero-argument F3DBD0 call unbalances ESP by 4 bytes')
+else:
+ raise AssertionError('old signature unexpectedly balanced')
+call(0xF3DBD0,render,[0])
+print('PASS actual F3DBD0 instructions with corrected one-argument ABI preserve ESP')

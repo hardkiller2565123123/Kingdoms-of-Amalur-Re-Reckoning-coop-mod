@@ -48,7 +48,13 @@ namespace PlayerLifecycleSync
             if (!diagnostics.Connected || !diagnostics.RuntimeObject || diagnostics.Manual) continue;
             std::uint32_t revision = 0;
             std::vector<std::uint8_t> bytes;
-            if (!NetworkManager::GetVisualState(id, revision, bytes)) continue;
+            std::uint32_t appliedRevision = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                auto& state = g_states[id];
+                if (state.Handle == diagnostics.ObjectHandle) appliedRevision = state.Applied;
+            }
+            if (!NetworkManager::GetVisualState(id, revision, bytes, appliedRevision)) continue;
             const auto now = GetTickCount64();
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
@@ -65,6 +71,9 @@ namespace PlayerLifecycleSync
                 if (state.Retries >= 3 || now - state.LastAttempt < 1000) continue;
                 state.LastAttempt = now; ++state.Retries;
             }
+            Logger::WriteFormat(Logger::Level::Debug,
+                "Peer visuals apply begin player=%u revision=%u bytes=%u", id, revision,
+                static_cast<unsigned>(bytes.size()));
             const bool applied = CharacterVisualRuntime::Apply(diagnostics.ObjectHandle,
                 diagnostics.RuntimeObject, bytes);
             RemotePlayerManager::RefreshProxyRuntimeState(id);

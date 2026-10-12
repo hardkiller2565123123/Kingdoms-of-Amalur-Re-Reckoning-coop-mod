@@ -21,6 +21,8 @@ namespace Config
         bool AutoScanOnStartup = false;
         bool DebugConsoleOnStartup = false;
         float MenuScale = 1.0f;
+        int ForegroundFPS = 60;
+        int BackgroundFPS = 30;
     };
 
     void Load();

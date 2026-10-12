@@ -6,4 +6,8 @@ if not exist "%~dp0..\build\tests" mkdir "%~dp0..\build\tests"
 cl /nologo /std:c++20 /EHsc /W4 /DWIN32_LEAN_AND_MEAN /DNOMINMAX /Fe:"%~dp0..\build\tests\NetworkTests.exe" /Fo:"%~dp0..\build\tests\NetworkTests.obj" "%~dp0NetworkTests.cpp"
 if errorlevel 1 exit /b 1
 "%~dp0..\build\tests\NetworkTests.exe"
+if errorlevel 1 exit /b 1
+cl /nologo /std:c++20 /EHsc /W4 /Od /RTC1 /Fe:"%~dp0..\build\tests\NativeVisualAbiTests.exe" /Fo:"%~dp0..\build\tests\NativeVisualAbiTests.obj" "%~dp0NativeVisualAbiTests.cpp"
+if errorlevel 1 exit /b 1
+"%~dp0..\build\tests\NativeVisualAbiTests.exe"
 exit /b %errorlevel%

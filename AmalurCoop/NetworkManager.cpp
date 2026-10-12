@@ -615,6 +615,7 @@ namespace
         event.SenderTick = packet.SenderTick;
         event.PacketSequence = sequence;
         event.FlagA = packet.FlagA;
+        event.ReceivedAtMs = NowMs();
 
         if (g_motionQueue.size() >= 128)
             g_motionQueue.pop_front();
@@ -1213,6 +1214,11 @@ namespace NetworkManager
 {
     void CaptureLocalSnapshot()
     {
+        // Native metadata is sampled at 30 Hz; wire transforms keep their own cadence.
+        static ULONGLONG lastMetadataCapture = 0;
+        const auto captureNow = GetTickCount64();
+        if (lastMetadataCapture && captureNow - lastMetadataCapture < 33) return;
+        lastMetadataCapture = captureNow;
         auto current = BuildLocalSnapshot();
         float rotation[4]{};
         const auto transform = PositionTracker::GetTransformComponent();
@@ -1633,11 +1639,11 @@ namespace NetworkManager
         return peers;
     }
 
-    bool GetVisualState(std::uint32_t playerId, std::uint32_t& revision, std::vector<std::uint8_t>& bytes)
+    bool GetVisualState(std::uint32_t playerId, std::uint32_t& revision, std::vector<std::uint8_t>& bytes, std::uint32_t skipRevision)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         const auto* peer = FindPeer(playerId);
-        if (!peer || !peer->Connected || !peer->VisualRevision) return false;
+        if (!peer || !peer->Connected || !peer->VisualRevision || peer->VisualRevision == skipRevision) return false;
         revision = peer->VisualRevision; bytes = peer->VisualBytes; return true;
     }
 

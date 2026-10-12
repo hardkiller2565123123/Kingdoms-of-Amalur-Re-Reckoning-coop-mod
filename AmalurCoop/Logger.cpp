@@ -139,7 +139,7 @@ namespace
 
         OutputDebugStringA(line.c_str());
 
-        if (g_consoleOutput != INVALID_HANDLE_VALUE)
+        if (g_consoleOutput != INVALID_HANDLE_VALUE && g_consoleWindow && IsWindowVisible(g_consoleWindow))
         {
             SetConsoleTextAttribute(g_consoleOutput, LevelColor(level));
             RawWrite(g_consoleOutput, line.c_str(), static_cast<DWORD>(line.size()));
@@ -149,7 +149,9 @@ namespace
         if (g_fileEnabled && g_logFile != INVALID_HANDLE_VALUE)
         {
             RawWrite(g_logFile, line.c_str(), static_cast<DWORD>(line.size()));
-            FlushFileBuffers(g_logFile);
+            // Avoid synchronous disk flushes on every render/network log line.
+            // Preserve immediate error diagnostics; Shutdown also flushes.
+            if (level == Logger::Level::Error) FlushFileBuffers(g_logFile);
         }
     }
 

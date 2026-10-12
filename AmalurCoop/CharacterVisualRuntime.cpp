@@ -1,6 +1,8 @@
 #include "CharacterVisualRuntime.h"
 #include "CharacterVisualArchive.h"
+#include "NativeVisualCalls.h"
 #include "EngineRuntime.h"
+#include "Logger.h"
 #include "PositionTracker.h"
 #include <Windows.h>
 #include <array>
@@ -171,6 +173,7 @@ namespace
     }
     bool LoadNative(uintptr_t rendering, Archive* stream)
     {
+        const char* stage = "F1DA50 archive load";
         __try
         {
             using Load = void(__thiscall*)(void*, void*);
@@ -180,13 +183,20 @@ namespace
             if (stream->Offset != stream->Size || stream->Depth) return false;
             // Native PartRendering post-load: bind this actor's owner to the
             // newly created render tree, attach stats callbacks, update location.
+            stage = "F757C0 post-load";
             reinterpret_cast<Refresh>(EngineRuntime::RuntimeAddress(0x00F757C0))(
                 reinterpret_cast<void*>(rendering));
-            reinterpret_cast<Refresh>(EngineRuntime::RuntimeAddress(0x00F3DBD0))(
+            stage = "F3DBD0 world transform callback";
+            NativeVisualCalls::UpdateWorldTransform(EngineRuntime::RuntimeAddress(0x00F3DBD0),
                 reinterpret_cast<void*>(rendering));
             return true;
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            Logger::WriteFormat(Logger::Level::Error, "Peer visual native exception stage=%s code=0x%08X",
+                stage, static_cast<unsigned>(GetExceptionCode()));
+            return false;
+        }
     }
     bool ResolveModel(std::uint32_t key)
     {

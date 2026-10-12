@@ -158,6 +158,7 @@
     <ClInclude Include="NetworkManager.h" />
     <ClInclude Include="NetworkProtocol.h" />
     <ClInclude Include="CharacterVisualRuntime.h" />
+    <ClInclude Include="NativeVisualCalls.h" />
     <ClInclude Include="CharacterVisualArchive.h" />
     <ClInclude Include="VisualTransfer.h" />
     <ClInclude Include="Paths.h" />
@@ -191,4 +192,5 @@
   </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
+  <ItemGroup><ClInclude Include="WindowFocusPolicy.h" /></ItemGroup>
 </Project>

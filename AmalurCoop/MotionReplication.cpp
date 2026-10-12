@@ -16,6 +16,8 @@
 #include <Windows.h>
 
 #include <array>
+#include <deque>
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -98,6 +100,10 @@ namespace
     std::size_t g_outgoingReadIndex = 0;
     std::size_t g_outgoingCount = 0;
 
+    // Render-thread-only staging; network ingress timestamps prevent old attacks
+    // from replaying after a long pause or delayed proxy creation.
+    std::deque<NetworkManager::MotionEventPacket> g_pendingIncoming;
+    ULONGLONG g_lastMotionSummary = 0;
     ULONGLONG g_nextLocalControllerRefresh = 0;
     ULONGLONG g_nextNetworkCacheRefresh = 0;
     ULONGLONG g_lastLocalControllerDiagnostic = 0;
@@ -713,13 +719,20 @@ namespace MotionReplication
         RefreshLocalControllerCache();
         FlushOutgoingMotion();
 
-        int processed = 0;
         NetworkManager::MotionEventPacket packet{};
-
-        while (processed++ < kMaxIncomingMotionPerPump &&
-               NetworkManager::PopMotionEvent(packet))
+        const auto now = GetTickCount64();
+        for (unsigned read = 0; read < 32 && NetworkManager::PopMotionEvent(packet); ++read)
         {
             ++g_receivedPackets;
+            if (!packet.ReceivedAtMs) packet.ReceivedAtMs = now;
+            if (g_pendingIncoming.size() >= 128) { g_pendingIncoming.pop_front(); ++g_droppedPackets; }
+            g_pendingIncoming.push_back(packet);
+        }
+        const auto attempts = (std::min)(g_pendingIncoming.size(), static_cast<std::size_t>(kMaxIncomingMotionPerPump));
+        for (std::size_t processed = 0; processed < attempts; ++processed)
+        {
+            packet = g_pendingIncoming.front(); g_pendingIncoming.pop_front();
+            if (now - packet.ReceivedAtMs > 750) { ++g_droppedPackets; continue; }
             g_lastHash.store(packet.MotionHash, std::memory_order_release);
             g_lastSequence.store(packet.PacketSequence, std::memory_order_release);
 
@@ -729,10 +742,12 @@ namespace MotionReplication
                 continue;
             }
 
-            const uintptr_t controller = ResolveRemoteController(packet.ActorNetId);
+            const auto proxy = RemotePlayerManager::GetProxyDiagnostics(packet.ActorNetId);
+            if (!proxy.Connected) { ++g_droppedPackets; continue; }
+            const uintptr_t controller = proxy.AppearanceRefreshApplied ? ResolveRemoteController(packet.ActorNetId) : 0;
             if (!controller)
             {
-                ++g_droppedPackets;
+                g_pendingIncoming.push_back(packet);
                 continue;
             }
 
@@ -763,6 +778,14 @@ namespace MotionReplication
                 }
             }
         }
+        if (now - g_lastMotionSummary >= 5000)
+        {
+            g_lastMotionSummary = now;
+            Logger::WriteFormat(Logger::Level::Debug,
+                "Motion counters sent=%llu received=%llu replayed=%llu dropped=%llu pending=%u local=0x%08X",
+                g_sentPackets.load(), g_receivedPackets.load(), g_replayCount.load(), g_droppedPackets.load(),
+                static_cast<unsigned>(g_pendingIncoming.size()), static_cast<unsigned>(g_localControllerFast.load()));
+        }
     }
 
     void InvalidateRemoteController(std::uint32_t actorNetId)
@@ -786,6 +809,7 @@ namespace MotionReplication
 
     void ResetForWorldTransition()
     {
+        g_pendingIncoming.clear();
         g_localControllerFast.store(0, std::memory_order_release);
         g_localPlayerIdFast.store(0, std::memory_order_release);
         g_canSendMotionFast.store(false, std::memory_order_release);

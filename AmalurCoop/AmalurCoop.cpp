@@ -95,7 +95,7 @@ namespace
             return false;
         }
 
-        Logger::ShowConsole(true);
+        Logger::ShowConsole(false);
         LogStartupInformation();
 
         Logger::Write(
@@ -120,6 +120,7 @@ namespace
             "Loading configuration...");
 
         Config::Load();
+        Logger::ShowConsole(Config::Get().DebugConsoleOnStartup);
 
         const Config::Settings settings =
             Config::Get();

@@ -269,4 +269,6 @@
     <ClInclude Include="CharacterVisualArchive.h"><Filter>Features</Filter></ClInclude>
     <ClInclude Include="VisualTransfer.h"><Filter>Features</Filter></ClInclude>
   </ItemGroup>
+  <ItemGroup><ClInclude Include="NativeVisualCalls.h"><Filter>Features</Filter></ClInclude></ItemGroup>
+  <ItemGroup><ClInclude Include="WindowFocusPolicy.h"><Filter>Features</Filter></ClInclude></ItemGroup>
 </Project>

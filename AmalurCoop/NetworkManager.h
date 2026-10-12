@@ -75,6 +75,7 @@ namespace NetworkManager
         std::uint32_t SenderTick = 0;
         std::uint32_t PacketSequence = 0;
         std::uint8_t FlagA = 0;
+        std::uint64_t ReceivedAtMs = 0; // receiver clock only; never serialized
     };
 
     struct Stats
@@ -96,7 +97,7 @@ namespace NetworkManager
     // Capture native metadata on the render/game pump; UDP work reads a copy.
     void CaptureLocalSnapshot();
     bool GetVisualState(std::uint32_t playerId, std::uint32_t& revision,
-        std::vector<std::uint8_t>& bytes);
+        std::vector<std::uint8_t>& bytes, std::uint32_t skipRevision = 0);
 
     bool Host(unsigned short port);
     bool Join(const std::string& address, unsigned short port);

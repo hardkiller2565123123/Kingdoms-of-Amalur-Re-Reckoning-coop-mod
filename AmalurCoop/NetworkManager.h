@@ -21,6 +21,21 @@ namespace NetworkManager
         float Z = 0.0f;
     };
 
+    struct PlayerSnapshot
+    {
+        std::uint32_t DefinitionHandle = 0;
+        std::uint32_t PlayerSetupValue = 0;
+        std::uint32_t Flags = 0;
+        std::uint32_t Revision = 0;
+    };
+
+    enum PlayerSnapshotFlags : std::uint32_t
+    {
+        SnapshotHasTransformComponent = 1u << 0,
+        SnapshotHasActorStateComponent = 1u << 1,
+        SnapshotHasComponent15 = 1u << 2
+    };
+
     struct PeerInfo
     {
         std::uint32_t PlayerId = 0;
@@ -28,9 +43,26 @@ namespace NetworkManager
         std::uint16_t Port = 0;
         std::uint32_t PingMs = 0;
         std::uint64_t LastSeenMs = 0;
+        std::uint64_t LastTransformMs = 0;
         bool Connected = false;
         bool HasTransform = false;
+        bool HasSnapshot = false;
+        std::uint32_t VisualRevision = 0;
         Vec3 Position{};
+        float Rotation[4]{ 0, 0, 0, 1 };
+        bool HasRotation = false;
+        PlayerSnapshot Snapshot{};
+    };
+
+
+    struct DiscoveredHost
+    {
+        std::string Address;
+        std::uint16_t Port = 0;
+        std::uint32_t Players = 0;
+        std::uint32_t MaxPlayers = 0;
+        std::uint32_t PingMs = 0;
+        std::uint64_t LastSeenMs = 0;
     };
 
     struct MotionEventPacket
@@ -61,6 +93,10 @@ namespace NetworkManager
     void Initialize();
     void Shutdown();
     void Update();
+    // Capture native metadata on the render/game pump; UDP work reads a copy.
+    void CaptureLocalSnapshot();
+    bool GetVisualState(std::uint32_t playerId, std::uint32_t& revision,
+        std::vector<std::uint8_t>& bytes);
 
     bool Host(unsigned short port);
     bool Join(const std::string& address, unsigned short port);
@@ -72,6 +108,9 @@ namespace NetworkManager
     Stats GetStats();
     std::vector<PeerInfo> GetPeers();
     std::uint32_t GetLocalPlayerId();
+
+    void RequestServerDiscovery(unsigned short port);
+    std::vector<DiscoveredHost> GetDiscoveredHosts();
 
     bool SendMotionEvent(const MotionEventPacket& packet);
     bool PopMotionEvent(MotionEventPacket& packet);

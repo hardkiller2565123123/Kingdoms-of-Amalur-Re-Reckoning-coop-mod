@@ -73,7 +73,7 @@ namespace
 
         Logger::Write(
             Logger::Level::Info,
-            "Log file: AmalurCoop.log");
+            "Log file: AmalurCoop-<process ID>.log");
 
         Logger::Write(
             Logger::Level::Info,
@@ -84,7 +84,7 @@ namespace
     {
         // Always create the CMD logger.
         //
-        // The second argument enables AmalurCoop.log in the game directory.
+        // The second argument enables a per-process log in the game directory.
         if (!Logger::Initialize(
             L"AmalurCoop - Debug Logger",
             true))
@@ -216,6 +216,7 @@ namespace
             Logger::Level::Success,
             "Network manager initialized");
 
+
         Logger::Write(
             Logger::Level::Info,
             "Initializing MinHook...");
@@ -281,9 +282,7 @@ namespace
     {
         LobbyManager::Update();
         CombatScaler::Update();
-        PositionTracker::Update();
         RuntimeInspector::Update();
-        RemotePlayerManager::Update();
         NetworkManager::Update();
         GameState::Update();
     }
@@ -309,6 +308,7 @@ namespace
             Logger::Shutdown();
             return;
         }
+
 
         Logger::Write(
             Logger::Level::Info,

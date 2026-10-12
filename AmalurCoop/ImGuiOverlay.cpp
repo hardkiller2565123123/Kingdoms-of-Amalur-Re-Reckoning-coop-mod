@@ -16,6 +16,7 @@
 #include "MotionReplication.h"
 #include "NetworkManager.h"
 #include "PositionTracker.h"
+#include "PlayerLifecycleSync.h"
 #include "RemotePlayerManager.h"
 #include "RuntimeInspector.h"
 #include "ResearchLab.h"
@@ -151,7 +152,9 @@ namespace
     void ReconcileCursor()
     {
         const Config::Settings settings = Config::Get();
-        const bool shouldForce = g_menuOpen.load() && settings.ForceCursorVisible;
+        const bool shouldForce =
+            g_menuOpen.load() &&
+            settings.ForceCursorVisible;
 
         if (shouldForce && g_cursorShowCalls == 0)
         {
@@ -186,6 +189,7 @@ namespace
     {
         if (g_rendererReady.load())
             ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam);
+
 
         if (g_menuOpen.load() && Config::Get().CaptureInput && IsInputMessage(message))
             return 1;
@@ -394,7 +398,7 @@ namespace
         ImGui::Separator();
         ImGui::Text("Peers (%zu)", peers.size());
 
-        if (ImGui::BeginTable("##peers", 7,
+        if (ImGui::BeginTable("##peers", 8,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
             ImVec2(0.0f, 180.0f)))
         {
@@ -402,6 +406,7 @@ namespace
             ImGui::TableSetupColumn("Address");
             ImGui::TableSetupColumn("State");
             ImGui::TableSetupColumn("Ping");
+            ImGui::TableSetupColumn("Snapshot");
             ImGui::TableSetupColumn("X");
             ImGui::TableSetupColumn("Y");
             ImGui::TableSetupColumn("Z");
@@ -416,6 +421,11 @@ namespace
                 ImGui::TextColored(peer.Connected ? ImVec4(0.35f, 0.90f, 0.48f, 1.0f) : ImVec4(0.95f, 0.48f, 0.30f, 1.0f),
                     "%s", peer.Connected ? "Connected" : "Timed out");
                 ImGui::TableNextColumn(); ImGui::Text("%u ms", peer.PingMs);
+                ImGui::TableNextColumn();
+                if (peer.HasSnapshot)
+                    ImGui::Text("r%u", peer.Snapshot.Revision);
+                else
+                    ImGui::TextUnformatted("--");
                 ImGui::TableNextColumn(); ImGui::Text(peer.HasTransform ? "%.2f" : "--", peer.Position.X);
                 ImGui::TableNextColumn(); ImGui::Text(peer.HasTransform ? "%.2f" : "--", peer.Position.Y);
                 ImGui::TableNextColumn(); ImGui::Text(peer.HasTransform ? "%.2f" : "--", peer.Position.Z);
@@ -584,6 +594,7 @@ namespace
 
             row("Player root", PositionTracker::GetPlayerRoot());
             row("Player manager", PositionTracker::GetPlayerManager());
+            row("Player manager entry count", static_cast<uintptr_t>(PositionTracker::GetPlayerContextCount()));
             row("Player context", PositionTracker::GetPlayerContext());
             row("Object handle", PositionTracker::GetObjectHandle());
             row("Definition handle", PositionTracker::GetDefinitionHandle());
@@ -614,8 +625,9 @@ namespace
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::TextUnformatted("Player-style remote proxy");
-        ImGui::TextWrapped("Remote actors now use the game's player-style FC6170 -> F86E20 spawn path with the local player definition descriptors. The old FC6220 stack/entity duplication path is no longer used for remote players.");
+        ImGui::TextWrapped("Each peer sends an asset-keyed rendering archive with attached models. Visual archives are acknowledged and retried; position, rotation and animation requests update separately.");
         ImGui::Text("Status: %s", RemotePlayerManager::GetStatusText().c_str());
+        ImGui::Text("Lifecycle: %s", PlayerLifecycleSync::GetStatusText().c_str());
 
         const RemotePlayerManager::ProxyDiagnostics proxy = RemotePlayerManager::GetFirstProxyDiagnostics();
         if (proxy.ObjectHandle)
@@ -632,19 +644,29 @@ namespace
                     ImGui::Text("0x%08X", static_cast<unsigned int>(value));
                 };
 
+                proxyRow("Network player ID", proxy.PlayerId);
+                proxyRow("Engine Player slot", proxy.GamePlayerIndex);
+                proxyRow("Snapshot revision", proxy.SnapshotRevision);
                 proxyRow("Object handle", proxy.ObjectHandle);
                 proxyRow("Persistent actor handle", proxy.PersistentActorHandle);
                 proxyRow("Definition handle", proxy.DefinitionHandle);
+                proxyRow("Player context", proxy.PlayerContext);
                 proxyRow("Runtime object", proxy.RuntimeObject);
                 proxyRow("Component 6 / transform", proxy.TransformComponent);
-                proxyRow("Component 7 / actor state", proxy.ActorStateComponent);
-                proxyRow("Component 15 / candidate visual", proxy.AppearanceComponent);
+                proxyRow("Component 7 / rendering", proxy.ActorStateComponent);
+                proxyRow("Component 9 / inventory", proxy.EquipmentComponent);
+                proxyRow("Rendering for peer visuals", proxy.AppearanceComponent);
+                proxyRow("Component 42 / motion", proxy.RigSwapComponent);
                 proxyRow("Actor-state handle", proxy.ActorStateHandle);
                 proxyRow("Actor-state entry", proxy.ActorStateEntry);
                 ImGui::EndTable();
             }
 
-            ImGui::Text("Safe proxy post-setup: %s", proxy.PlayerPostSetupApplied ? "applied" : "partial/pending");
+            ImGui::Text("Snapshot: %s", proxy.HasSnapshot ? "received" : "not received");
+            ImGui::Text("Engine Player context: %s", proxy.PlayerContextBound ? "bound + active" : (proxy.PlayerContextFound ? "found but not bound" : "not provided by game"));
+            ImGui::Text("Native spawn finalization: %s", proxy.LateActorFinalizeApplied ? "complete" : "pending/failed");
+            ImGui::Text("Player-style post-setup: %s", proxy.PlayerPostSetupApplied ? "applied" : "partial/pending");
+            ImGui::Text("Peer rendering archive: %s", proxy.AppearanceRefreshApplied ? "applied" : "waiting or apply failed");
             ImGui::Text("Actor-state entry: %s", proxy.ActorStateResolved ? "resolved" : "pending");
             if (!proxy.SpawnStatus.empty())
                 ImGui::TextWrapped("Spawn detail: %s", proxy.SpawnStatus.c_str());
@@ -1281,6 +1303,7 @@ namespace
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
         ApplyStyle();
@@ -1334,6 +1357,9 @@ namespace
 
         // Actor creation touches world/graphics systems and must run from the
         // game's render thread rather than the background network thread.
+        PositionTracker::Update();
+        NetworkManager::CaptureLocalSnapshot();
+        RemotePlayerManager::Update();
         RemotePlayerManager::PumpGameThread();
 
         if (g_rendererReady.load() && g_renderTarget)
@@ -1342,6 +1368,7 @@ namespace
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
+
 
             if (g_menuOpen.load())
                 RenderMenu();

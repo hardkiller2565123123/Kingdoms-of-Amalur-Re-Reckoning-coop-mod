@@ -3,6 +3,8 @@
 #include "Logger.h"
 #include "MinHook.h"
 #include "MotionReplication.h"
+#include "MainMenuMultiplayer.h"
+#include "PlayerLifecycleSync.h"
 
 #include <atomic>
 #include <string>
@@ -28,7 +30,9 @@ namespace HookManager
             return;
         }
 
+        MainMenuMultiplayer::Initialize();
         MotionReplication::Initialize();
+        PlayerLifecycleSync::Initialize();
 
         g_ready.store(true, std::memory_order_release);
         Logger::Write(Logger::Level::Success,
@@ -40,7 +44,9 @@ namespace HookManager
         if (!g_ready.exchange(false, std::memory_order_acq_rel))
             return;
 
+        PlayerLifecycleSync::Shutdown();
         MotionReplication::Shutdown();
+        MainMenuMultiplayer::Shutdown();
         MH_Uninitialize();
         Logger::Write("HookManager shutdown");
     }

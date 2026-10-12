@@ -154,14 +154,8 @@ namespace
             return object;
         };
 
-        if (const uintptr_t object = resolveOne(requestedHandle))
-            return object;
-
-        uint32_t fallbackHandle = 0;
-        if (SafeRead(registry + kFallbackHandleOffset, fallbackHandle))
-            return resolveOne(fallbackHandle);
-
-        return 0;
+        // A registry fallback is not the requested player (notably on loads).
+        return resolveOne(requestedHandle);
     }
 
     void PublishFailure(const char* status)
@@ -239,6 +233,7 @@ namespace PositionTracker
         const uintptr_t context = FindPlayerContext(manager, 0);
         if (!context)
         {
+            PublishFailure("Waiting for player context");
             std::lock_guard<std::mutex> lock(g_mutex);
             g_playerRoot = playerRoot;
             g_playerManager = manager;
@@ -355,6 +350,33 @@ namespace PositionTracker
     uintptr_t GetPlayerRoot() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerRoot; }
     uintptr_t GetPlayerManager() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerManager; }
     uintptr_t GetPlayerContext() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerContext; }
+
+    uintptr_t FindPlayerContextByIndex(int playerIndex)
+    {
+        uintptr_t manager = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            manager = g_playerManager;
+        }
+
+        if (!manager || playerIndex < 0)
+            return 0;
+        return FindPlayerContext(manager, playerIndex);
+    }
+
+    int GetPlayerContextCount()
+    {
+        uintptr_t manager = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            manager = g_playerManager;
+        }
+
+        int count = 0;
+        if (!manager || !SafeRead(manager + 0x8, count) || count < 0 || count > 64)
+            return 0;
+        return count;
+    }
     uint32_t GetObjectHandle() { std::lock_guard<std::mutex> lock(g_mutex); return g_objectHandle; }
     uint32_t GetDefinitionHandle() { std::lock_guard<std::mutex> lock(g_mutex); return g_definitionHandle; }
     uint32_t GetPlayerSetupValue() { std::lock_guard<std::mutex> lock(g_mutex); return g_playerSetupValue; }

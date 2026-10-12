@@ -69,6 +69,15 @@
     <ClCompile Include="NetworkManager.cpp">
       <Filter>Features</Filter>
     </ClCompile>
+    <ClCompile Include="PlayerContextRuntime.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="PlayerAppearanceRuntime.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
+    <ClCompile Include="PlayerLifecycleSync.cpp">
+      <Filter>Features</Filter>
+    </ClCompile>
     <ClCompile Include="PlayerProxySpawner.cpp">
       <Filter>Features</Filter>
     </ClCompile>
@@ -82,6 +91,9 @@
       <Filter>Interface</Filter>
     </ClCompile>
     <ClCompile Include="ImGuiOverlay.cpp">
+      <Filter>Interface</Filter>
+    </ClCompile>
+    <ClCompile Include="MainMenuMultiplayer.cpp">
       <Filter>Interface</Filter>
     </ClCompile>
     <ClCompile Include="DInputProxy.cpp">
@@ -164,6 +176,15 @@
     <ClInclude Include="NetworkManager.h">
       <Filter>Features</Filter>
     </ClInclude>
+    <ClInclude Include="PlayerContextRuntime.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayerAppearanceRuntime.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayerLifecycleSync.h">
+      <Filter>Features</Filter>
+    </ClInclude>
     <ClInclude Include="PlayerProxySpawner.h">
       <Filter>Features</Filter>
     </ClInclude>
@@ -177,6 +198,9 @@
       <Filter>Interface</Filter>
     </ClInclude>
     <ClInclude Include="ImGuiOverlay.h">
+      <Filter>Interface</Filter>
+    </ClInclude>
+    <ClInclude Include="MainMenuMultiplayer.h">
       <Filter>Interface</Filter>
     </ClInclude>
     <ClInclude Include="DInputProxy.h">
@@ -224,13 +248,11 @@
     <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h">
       <Filter>Third Party\Dear ImGui\Backends</Filter>
     </ClInclude>
-    <ClInclude Include="NetworkProtocol.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="setup_dependencies.ps1">
       <Filter>Third Party</Filter>
     </None>
-    <None Include="LICENSE" />
   </ItemGroup>
   <ItemGroup>
     <None Include="DINPUT8.def" />
@@ -240,5 +262,11 @@
     <ClInclude Include="RuntimeInspector.h">
       <Filter>Features</Filter>
     </ClInclude>
+</ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="CharacterVisualRuntime.cpp"><Filter>Features</Filter></ClCompile>
+    <ClInclude Include="CharacterVisualRuntime.h"><Filter>Features</Filter></ClInclude>
+    <ClInclude Include="CharacterVisualArchive.h"><Filter>Features</Filter></ClInclude>
+    <ClInclude Include="VisualTransfer.h"><Filter>Features</Filter></ClInclude>
   </ItemGroup>
 </Project>

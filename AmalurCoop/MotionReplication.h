@@ -50,5 +50,9 @@ namespace MotionReplication
     // A newly spawned proxy must resolve a fresh actor-state/controller graph.
     void InvalidateRemoteController(std::uint32_t actorNetId);
 
+    // Clears cached controllers and queued motion while the game is unloading or
+    // changing worlds. No engine calls are made from this reset.
+    void ResetForWorldTransition();
+
     Stats GetStats();
 }

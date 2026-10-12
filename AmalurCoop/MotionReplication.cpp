@@ -312,6 +312,7 @@ namespace
             !EngineRuntime::Read(actorStateComponent + kActorStateHandleOffset, actorStateHandle) ||
             actorStateHandle < 2)
         {
+            ClearLocalControllerCache("Waiting for current render controller");
             if (now - g_lastLocalControllerDiagnostic >= kDiagnosticLogIntervalMs)
             {
                 g_lastLocalControllerDiagnostic = now;
@@ -334,6 +335,7 @@ namespace
 
         if (!controller || !IsReadableObject(controller))
         {
+            ClearLocalControllerCache("Waiting for current render controller");
             if (now - g_lastLocalControllerDiagnostic >= kDiagnosticLogIntervalMs)
             {
                 g_lastLocalControllerDiagnostic = now;
@@ -497,19 +499,13 @@ namespace
             return 0;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(g_stateMutex);
-            if (g_lastRemoteController &&
-                g_lastRemoteActorNetId == actorNetId &&
-                g_lastRemoteRuntimeObject == runtimeObject &&
-                g_lastRemoteController != localControllerSnapshot &&
-                IsReadableObject(g_lastRemoteController))
-            {
-                return g_lastRemoteController;
-            }
-        }
-
-        if (!actorStateHandle && actorStateComponent)
+        // Resolve the current C7 handle on every replay: a readable cached
+        // controller can belong to a render tree which has already been replaced.
+        actorStateHandle = 0;
+        if (!EngineRuntime::IsActiveObject(runtimeObject) ||
+            EngineRuntime::GetComponent(runtimeObject, 7) != actorStateComponent)
+            return 0;
+        if (actorStateComponent)
             SafeRead(actorStateComponent + kActorStateHandleOffset, actorStateHandle);
 
         // Verified direct path only. The old fallback scanned every actor-state
@@ -577,7 +573,7 @@ namespace
 
         __try
         {
-            oMotionRequest(
+            const int result = oMotionRequest(
                 reinterpret_cast<void*>(controller),
                 packet.MotionHash,
                 packet.RequestedVariant,
@@ -585,7 +581,7 @@ namespace
                 packet.FlagA,
                 0,
                 packet.ParameterB);
-            return true;
+            return result != -1;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -786,6 +782,54 @@ namespace MotionReplication
         g_remoteControllerAC = 0;
         g_remoteControllerB4 = 0;
         g_status = "Remote proxy spawned; waiting for Component-7 controller";
+    }
+
+    void ResetForWorldTransition()
+    {
+        g_localControllerFast.store(0, std::memory_order_release);
+        g_localPlayerIdFast.store(0, std::memory_order_release);
+        g_canSendMotionFast.store(false, std::memory_order_release);
+        g_localActorStateIndex.store(-1, std::memory_order_release);
+        g_remoteActorStateIndex.store(-1, std::memory_order_release);
+
+        {
+            std::lock_guard<std::mutex> lock(g_outgoingMutex);
+            g_outgoingReadIndex = 0;
+            g_outgoingCount = 0;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_localRuntimeObject = 0;
+            g_localController = 0;
+            g_lastRemoteController = 0;
+            g_lastRemoteRuntimeObject = 0;
+            g_lastRemoteActorNetId = 0;
+            g_localActorStateEntry = 0;
+            g_remoteActorStateEntry = 0;
+            g_remoteActorStateComponent = 0;
+            g_remoteActorStateHandle = 0;
+            g_localControllerQueue = 0;
+            g_remoteControllerQueue = 0;
+            g_localControllerA8 = 0;
+            g_localControllerAC = 0;
+            g_localControllerB4 = 0;
+            g_remoteControllerA8 = 0;
+            g_remoteControllerAC = 0;
+            g_remoteControllerB4 = 0;
+            g_status = "World transition - motion controller caches cleared";
+        }
+
+        g_nextLocalControllerRefresh = 0;
+        g_nextNetworkCacheRefresh = 0;
+
+        // Drop old incoming animation events. They reference the previous
+        // world's actor/controller graph and must never be replayed after load.
+        NetworkManager::MotionEventPacket packet{};
+        int drained = 0;
+        while (drained++ < 256 && NetworkManager::PopMotionEvent(packet))
+        {
+        }
     }
 
     Stats GetStats()

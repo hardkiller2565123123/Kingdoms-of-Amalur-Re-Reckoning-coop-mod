@@ -2,6 +2,8 @@
 
 #include "EngineRuntime.h"
 #include "Logger.h"
+#include "PlayerContextRuntime.h"
+#include "PlayerAppearanceRuntime.h"
 #include "PositionTracker.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -33,12 +35,11 @@ namespace
 
     constexpr uintptr_t kRuntimePersistentActorManagerOffset = 0x1754;
     constexpr uintptr_t kDefinitionRecordVisualBlockOffset = 0x33C;
-    constexpr uintptr_t kPlayerSetupValueOffset = 0x2BC;
     constexpr uintptr_t kActorStateHandleOffset = 0x9C;
 
     constexpr unsigned int kTransformComponentId = 6;
     constexpr unsigned int kActorStateComponentId = 7;
-    constexpr unsigned int kAppearanceComponentId = 15;
+    constexpr unsigned int kAppearanceComponentId = 7;
 
     using GetPlayerPersistentKeyFn = std::uint32_t(__thiscall*)(void*);
     using ResolvePersistentActorHandleFn = std::uint32_t(__thiscall*)(void*, std::uint32_t);
@@ -110,6 +111,40 @@ namespace
         return result;
     }
 
+    bool ResolveDefinition(
+        ResolveManagedHandleFn resolveManaged,
+        uintptr_t definitionManager,
+        std::uint32_t definitionHandle,
+        uintptr_t& definitionRecord,
+        uintptr_t& descriptorA,
+        uintptr_t& descriptorB)
+    {
+        definitionRecord = 0;
+        descriptorA = 0;
+        descriptorB = 0;
+
+        void* record = CallResolveManagedHandle(
+            resolveManaged,
+            reinterpret_cast<void*>(definitionManager),
+            definitionHandle);
+        if (!record)
+            return false;
+
+        definitionRecord = reinterpret_cast<uintptr_t>(record);
+        uintptr_t visualBlock = 0;
+        if (!EngineRuntime::Read(
+                definitionRecord + kDefinitionRecordVisualBlockOffset,
+                visualBlock) ||
+            !visualBlock)
+        {
+            return false;
+        }
+
+        descriptorA = visualBlock + 0x04;
+        descriptorB = visualBlock + 0x14;
+        return true;
+    }
+
     bool CallSpawnActor(
         SpawnActorFn function,
         void* runtimeRoot,
@@ -146,7 +181,10 @@ namespace
         }
     }
 
-    bool CallApplyPlayerTransform(ApplyPlayerTransformFn function, uintptr_t component, const void* descriptor)
+    bool CallApplyPlayerTransform(
+        ApplyPlayerTransformFn function,
+        uintptr_t component,
+        const void* descriptor)
     {
         if (!function || !component || !descriptor)
             return false;
@@ -194,8 +232,13 @@ namespace
             return 0;
 
         uintptr_t manager = 0;
-        if (!EngineRuntime::Read(EngineRuntime::RuntimeAddress(kActorStateManagerGlobalIda), manager) || !manager)
+        if (!EngineRuntime::Read(
+                EngineRuntime::RuntimeAddress(kActorStateManagerGlobalIda),
+                manager) ||
+            !manager)
+        {
             return 0;
+        }
 
         const auto resolve = reinterpret_cast<ResolveActorStateFn>(
             EngineRuntime::RuntimeAddress(kResolveActorStateIda));
@@ -213,14 +256,19 @@ namespace
         }
         return reinterpret_cast<uintptr_t>(entry);
     }
-
 }
 
 namespace PlayerProxySpawner
 {
     SpawnResult SpawnFromLocalPlayer()
     {
+        return SpawnFromLocalPlayer(SpawnOptions{});
+    }
+
+    SpawnResult SpawnFromLocalPlayer(const SpawnOptions& options)
+    {
         SpawnResult result{};
+        result.GamePlayerIndex = options.GamePlayerIndex;
 
         const uintptr_t playerManager = PositionTracker::GetPlayerManager();
         const uintptr_t playerContext = PositionTracker::GetPlayerContext();
@@ -234,21 +282,11 @@ namespace PlayerProxySpawner
             return result;
         }
 
-        // DD15C0 resolves this handle separately from the actor-definition handle
-        // and passes both by address to FC6170. Supplying zero here was the last
-        // major difference between the game's player path and the old proxy path.
         result.PersistentActorHandle = ResolvePlayerPersistentActorHandle(
             runtimeRoot, playerManager);
         if (result.PersistentActorHandle < 2)
         {
             result.Status = "Player persistent actor handle is unavailable";
-            return result;
-        }
-
-        result.DefinitionHandle = EngineRuntime::GetActorDefinitionHandle(localRuntimeObject);
-        if (result.DefinitionHandle < 2)
-        {
-            result.Status = "Local player definition handle is unavailable";
             return result;
         }
 
@@ -270,31 +308,36 @@ namespace PlayerProxySpawner
             return result;
         }
 
-        void* definitionRecord = CallResolveManagedHandle(
-            resolveManaged,
-            reinterpret_cast<void*>(definitionManager),
-            result.DefinitionHandle);
-
-        result.DefinitionRecord = reinterpret_cast<uintptr_t>(definitionRecord);
-        if (!result.DefinitionRecord)
+        // A remote definition handle is accepted only when it resolves through
+        // this process's definition manager and contains the expected visual
+        // descriptor block. Otherwise use the verified local player definition.
+        std::uint32_t chosenDefinition = options.PreferredDefinitionHandle;
+        if (chosenDefinition >= 2 && ResolveDefinition(
+                resolveManaged,
+                definitionManager,
+                chosenDefinition,
+                result.DefinitionRecord,
+                result.DescriptorA,
+                result.DescriptorB))
         {
-            result.Status = "Player definition record did not resolve";
-            return result;
+            result.DefinitionHandle = chosenDefinition;
         }
-
-        uintptr_t visualBlock = 0;
-        if (!EngineRuntime::Read(
-                result.DefinitionRecord + kDefinitionRecordVisualBlockOffset,
-                visualBlock) ||
-            !visualBlock)
+        else
         {
-            result.Status = "Player visual descriptor block is unavailable";
-            return result;
+            chosenDefinition = EngineRuntime::GetActorDefinitionHandle(localRuntimeObject);
+            if (chosenDefinition < 2 || !ResolveDefinition(
+                    resolveManaged,
+                    definitionManager,
+                    chosenDefinition,
+                    result.DefinitionRecord,
+                    result.DescriptorA,
+                    result.DescriptorB))
+            {
+                result.Status = "Local player definition/visual descriptors are unavailable";
+                return result;
+            }
+            result.DefinitionHandle = chosenDefinition;
         }
-
-        // Verified from the game's DDFFB1/DDFFBA player path (FA9570/FA9580).
-        result.DescriptorA = visualBlock + 0x04;
-        result.DescriptorB = visualBlock + 0x14;
 
         int outActorHandle = 0;
         int persistentActorHandle = static_cast<int>(result.PersistentActorHandle);
@@ -342,10 +385,9 @@ namespace PlayerProxySpawner
             return result;
         }
 
-        bool transformSetup = false;
         const auto applyTransform = reinterpret_cast<ApplyPlayerTransformFn>(
             EngineRuntime::RuntimeAddress(kApplyPlayerTransformIda));
-        transformSetup = CallApplyPlayerTransform(
+        const bool transformSetup = CallApplyPlayerTransform(
             applyTransform,
             result.TransformComponent,
             reinterpret_cast<const void*>(result.DescriptorA));
@@ -354,12 +396,45 @@ namespace PlayerProxySpawner
         if (result.ActorStateComponent)
             stateComponentSetup = CallComponentStateInit(result.ActorStateComponent);
 
-        // DD15C0 calls F7A270 only after the real player-context owner has
-        // received the spawned actor through its vtable +0x3C/+0x20 methods.
-        // The supplied F7A270 assembly then reads owner fields at +0x30/+0x38,
-        // so it is not safe to call with a generic actor runtime pointer.
-        // Remote proxies intentionally skip the local-player binding calls.
-        EngineRuntime::Read(playerContext + kPlayerSetupValueOffset, result.PlayerSetupValue);
+        result.PlayerSetupValue = options.PlayerSetupValue
+            ? options.PlayerSetupValue
+            : PositionTracker::GetPlayerSetupValue();
+
+        PlayerContextRuntime::BindingResult binding{};
+        if (options.TryBindPlayerContext)
+        {
+            binding = PlayerContextRuntime::BindRemoteActor(
+                options.GamePlayerIndex,
+                result.ObjectHandle,
+                result.RuntimeObject,
+                result.PlayerSetupValue);
+        }
+        else
+        {
+            binding.Status = "No engine Player slot requested; raw F7A270 path skipped";
+        }
+
+        result.PlayerContext = binding.PlayerContext;
+        result.PlayerContextFound = binding.ContextFound;
+        result.PlayerContextBound = binding.Bound;
+        result.PlayerContextActivated = binding.Activated;
+        result.AdditionalPlayerStateApplied = false;
+
+        // FC6170 -> F86E20 already completed the native actor registration and
+        // F323A0 finalization. Peer rendering is applied later from portable
+        // asset-keyed archives; local inventory and physics are never copied.
+        result.LateActorFinalizeApplied = true;
+        const auto appearance = PlayerAppearanceRuntime::RefreshRemotePlayer(
+            result.ObjectHandle,
+            result.RuntimeObject);
+        result.EquipmentComponent = appearance.EquipmentComponent;
+        result.AppearanceComponent = appearance.AppearanceComponent
+            ? appearance.AppearanceComponent
+            : result.AppearanceComponent;
+        result.RigSwapComponent = appearance.RigSwapComponent;
+        result.ComponentCloneApplied = appearance.ComponentsCopied;
+        result.ComponentFinalizeApplied = appearance.ComponentsFinalized;
+        result.AppearanceRefreshApplied = appearance.InitializationApplied;
 
         if (result.ActorStateComponent)
         {
@@ -371,37 +446,52 @@ namespace PlayerProxySpawner
         result.ActorStateEntry = ResolveActorStateEntry(result.ActorStateHandle);
         result.ActorStateResolved = result.ActorStateEntry != 0;
 
-        result.PlayerPostSetupApplied = transformSetup && stateComponentSetup;
+        result.PlayerPostSetupApplied =
+            transformSetup &&
+            stateComponentSetup &&
+            result.LateActorFinalizeApplied;
         result.Success = true;
 
         std::ostringstream status;
         status << "Player-style proxy spawned";
+        if (options.TryBindPlayerContext)
+        {
+            if (result.PlayerContextBound)
+                status << "; engine Player slot " << options.GamePlayerIndex << " bound";
+            else if (!binding.Status.empty())
+                status << "; " << binding.Status;
+        }
         if (!result.ActorStateComponent)
             status << "; component 7 pending";
         if (!result.AppearanceComponent)
-            status << "; component 15 pending";
-        if (!result.PlayerPostSetupApplied)
-            status << "; partial safe post-setup";
+            status << "; PartRendering pending";
+        if (!result.AppearanceRefreshApplied)
+            status << "; player visual rebuild pending";
         if (!result.ActorStateResolved)
             status << "; actor-state entry pending";
         result.Status = status.str();
 
         Logger::WriteFormat(
             Logger::Level::Success,
-            "Player proxy spawn: handle=0x%08X object=0x%08X persistent=0x%08X def=0x%08X descA=0x%08X descB=0x%08X c6=0x%08X c7=0x%08X c15=0x%08X stateHandle=0x%08X state=0x%08X safePost=%s stateResolved=%s",
+            "Player proxy spawn: netSlot=%u handle=0x%08X object=0x%08X persistent=0x%08X def=0x%08X c6=0x%08X c7=0x%08X inventoryC9=0x%08X renderingC7=0x%08X motionC42=0x%08X visualImport=%s visualActivate=%s nativeFinalize=%s visualRebuild=%s playerCtx=0x%08X bound=%s stateHandle=0x%08X state=0x%08X",
+            result.GamePlayerIndex,
             result.ObjectHandle,
             static_cast<unsigned int>(result.RuntimeObject),
             result.PersistentActorHandle,
             result.DefinitionHandle,
-            static_cast<unsigned int>(result.DescriptorA),
-            static_cast<unsigned int>(result.DescriptorB),
             static_cast<unsigned int>(result.TransformComponent),
             static_cast<unsigned int>(result.ActorStateComponent),
+            static_cast<unsigned int>(result.EquipmentComponent),
             static_cast<unsigned int>(result.AppearanceComponent),
+            static_cast<unsigned int>(result.RigSwapComponent),
+            result.ComponentCloneApplied ? "yes" : "no",
+            result.ComponentFinalizeApplied ? "yes" : "no",
+            result.LateActorFinalizeApplied ? "yes" : "no",
+            result.AppearanceRefreshApplied ? "yes" : "no",
+            static_cast<unsigned int>(result.PlayerContext),
+            result.PlayerContextBound ? "yes" : "no",
             result.ActorStateHandle,
-            static_cast<unsigned int>(result.ActorStateEntry),
-            result.PlayerPostSetupApplied ? "yes" : "partial",
-            result.ActorStateResolved ? "yes" : "pending");
+            static_cast<unsigned int>(result.ActorStateEntry));
 
         return result;
     }

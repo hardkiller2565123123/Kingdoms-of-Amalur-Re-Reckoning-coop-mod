@@ -52,10 +52,11 @@ namespace
 
     std::wstring LogPath()
     {
+        const std::wstring filename = L"AmalurCoop-" + std::to_wstring(GetCurrentProcessId()) + L".log";
         wchar_t path[MAX_PATH]{};
         const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
         if (!length || length >= MAX_PATH)
-            return L"AmalurCoop.log";
+            return filename;
 
         std::wstring result(path, length);
         const auto slash = result.find_last_of(L"\\/");
@@ -63,7 +64,7 @@ namespace
             result.clear();
         else
             result.resize(slash + 1);
-        result += L"AmalurCoop.log";
+        result += filename;
         return result;
     }
 

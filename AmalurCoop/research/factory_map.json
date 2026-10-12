@@ -1,0 +1,475 @@
+[
+  {
+    "id": 0,
+    "branch": "0xfa5e8d",
+    "size": "0xe0",
+    "types": [
+      ".?AVPartCombat@BHG@@"
+    ],
+    "vtables": [
+      "0x1756ea4"
+    ]
+  },
+  {
+    "id": 1,
+    "branch": "0xfa5ea2",
+    "size": "0x100",
+    "types": [
+      ".?AVPartTarget@BHG@@"
+    ],
+    "vtables": [
+      "0x1756464"
+    ]
+  },
+  {
+    "id": 2,
+    "branch": "0xfa5e39",
+    "size": "0xd8",
+    "types": [
+      ".?AVPartPathing@BHG@@"
+    ],
+    "vtables": [
+      "0x1756b6c"
+    ]
+  },
+  {
+    "id": 3,
+    "branch": "0xfa5e15",
+    "size": "0x68",
+    "types": [
+      ".?AVPartSteering@BHG@@"
+    ],
+    "vtables": [
+      "0x1756264"
+    ]
+  },
+  {
+    "id": 4,
+    "branch": "0xfa5deb",
+    "size": "0x1b8",
+    "types": [
+      ".?AVPartAnimation@BHG@@"
+    ],
+    "vtables": [
+      "0x1756164"
+    ]
+  },
+  {
+    "id": 5,
+    "branch": "0xfa5e00",
+    "size": "0x228",
+    "types": [
+      ".?AVPartAmmo@BHG@@"
+    ],
+    "vtables": [
+      "0x17571d4"
+    ]
+  },
+  {
+    "id": 6,
+    "branch": "0xfa5dd6",
+    "size": "0xc4",
+    "types": [
+      ".?AVPartLocation@BHG@@"
+    ],
+    "vtables": [
+      "0x1755cdc"
+    ]
+  },
+  {
+    "id": 7,
+    "branch": "0xfa5d97",
+    "size": "0xf4",
+    "types": [
+      ".?AVPartRendering@BHG@@"
+    ],
+    "vtables": [
+      "0x17560e4"
+    ]
+  },
+  {
+    "id": 8,
+    "branch": "0xfa5e4e",
+    "size": "0xb4",
+    "types": [
+      ".?AVPartStats@BHG@@"
+    ],
+    "vtables": [
+      "0x17562e4"
+    ]
+  },
+  {
+    "id": 9,
+    "branch": "0xfa5e63",
+    "size": "0xc8",
+    "types": [
+      ".?AVPartInventory@BHG@@"
+    ],
+    "vtables": [
+      "0x1756da4"
+    ]
+  },
+  {
+    "id": 10,
+    "branch": "0xfa5e78",
+    "size": "0xa0",
+    "types": [
+      ".?AVPartItem@BHG@@"
+    ],
+    "vtables": [
+      "0x1756e24"
+    ]
+  },
+  {
+    "id": 11,
+    "branch": "0xfa5dac",
+    "size": "0x218",
+    "types": [
+      ".?AVPartWeapon@BHG@@"
+    ],
+    "vtables": [
+      "0x175745c"
+    ]
+  },
+  {
+    "id": 12,
+    "branch": "0xfa5dc1",
+    "size": "0x148",
+    "types": [
+      ".?AVPartArmor@BHG@@"
+    ],
+    "vtables": [
+      "0x17563e4"
+    ]
+  },
+  {
+    "id": 13,
+    "branch": "0xfa5eb7",
+    "size": "0x2c",
+    "types": [
+      ".?AVPartBlocking@BHG@@"
+    ],
+    "vtables": [
+      "0x17564e4"
+    ]
+  },
+  {
+    "id": 14,
+    "branch": "0xfa5f02",
+    "size": "0xdc",
+    "types": [
+      ".?AVPartBehavior@BHG@@"
+    ],
+    "vtables": [
+      "0x1756d24"
+    ]
+  },
+  {
+    "id": 15,
+    "branch": "0xfa5f17",
+    "size": "0x350",
+    "types": [
+      ".?AVPartPhysics@BHG@@"
+    ],
+    "vtables": [
+      "0x175759c"
+    ]
+  },
+  {
+    "id": 16,
+    "branch": "0xfa5f7d",
+    "size": "0x18c",
+    "types": [
+      ".?AVPartSenseMemory@BHG@@"
+    ],
+    "vtables": [
+      "0x17572dc"
+    ]
+  },
+  {
+    "id": 17,
+    "branch": "0xfa5f2c",
+    "size": "0x80",
+    "types": [
+      ".?AVPartLineOfSight@BHG@@"
+    ],
+    "vtables": [
+      "0x17567e4"
+    ]
+  },
+  {
+    "id": 18,
+    "branch": "0xfa5f56",
+    "size": "0xdc",
+    "types": [
+      ".?AVPartTalent@BHG@@"
+    ],
+    "vtables": [
+      "0x1757384"
+    ]
+  },
+  {
+    "id": 19,
+    "branch": "0xfa5f6b",
+    "size": "0x30",
+    "types": [
+      ".?AVPartFastTravelPoint@BHG@@"
+    ],
+    "vtables": [
+      "0x17565e4"
+    ]
+  },
+  {
+    "id": 20,
+    "branch": "0xfa5eed",
+    "size": "0xec",
+    "types": [
+      ".?AVPartBuff@BHG@@"
+    ],
+    "vtables": [
+      "0x17576e4"
+    ]
+  },
+  {
+    "id": 21,
+    "branch": "0xfa5f92",
+    "size": "0x40",
+    "types": [
+      ".?AVPartRead@BHG@@"
+    ],
+    "vtables": [
+      "0x1756664"
+    ]
+  },
+  {
+    "id": 22,
+    "branch": "0xfa5fa4",
+    "size": "0x28",
+    "types": [
+      ".?AVPartCustomInteraction@BHG@@"
+    ],
+    "vtables": [
+      "0x17566e4"
+    ]
+  },
+  {
+    "id": 23,
+    "branch": "0xfa5fb6",
+    "size": "0x44",
+    "types": [
+      ".?AVPartHarvest@BHG@@"
+    ],
+    "vtables": [
+      "0x1756764"
+    ]
+  },
+  {
+    "id": 24,
+    "branch": "0xfa5fec",
+    "size": "0x74",
+    "types": [
+      ".?AVPartDetection@BHG@@"
+    ],
+    "vtables": [
+      "0x1756064"
+    ]
+  },
+  {
+    "id": 25,
+    "branch": "0xfa5fc8",
+    "size": "0x54",
+    "types": [
+      ".?AVPartAttributes@BHG@@"
+    ],
+    "vtables": [
+      "0x1756364"
+    ]
+  },
+  {
+    "id": 26,
+    "branch": "0xfa5fda",
+    "size": "0x34",
+    "types": [
+      ".?AVPartSkills@BHG@@"
+    ],
+    "vtables": [
+      "0x1755f64"
+    ]
+  },
+  {
+    "id": 27,
+    "branch": "0xfa5ffe",
+    "size": "0x38",
+    "types": [
+      ".?AVPartServices@BHG@@"
+    ],
+    "vtables": [
+      "0x1756864"
+    ]
+  },
+  {
+    "id": 28,
+    "branch": "0xfa6010",
+    "size": "0x3c",
+    "types": [
+      ".?AVPartFormula@BHG@@"
+    ],
+    "vtables": [
+      "0x1756964"
+    ]
+  },
+  {
+    "id": 29,
+    "branch": "0xfa608e",
+    "size": "0xf8",
+    "types": [
+      ".?AVPartActivity@BHG@@"
+    ],
+    "vtables": [
+      "0x1757124"
+    ]
+  },
+  {
+    "id": 30,
+    "branch": "0xfa6022",
+    "size": "0x30",
+    "types": [
+      ".?AVPartUsableItem@BHG@@"
+    ],
+    "vtables": [
+      "0x17569e4"
+    ]
+  },
+  {
+    "id": 31,
+    "branch": "0xfa606a",
+    "size": "0x58",
+    "types": [
+      ".?AVPartSocketable@BHG@@"
+    ],
+    "vtables": [
+      "0x1756f24"
+    ]
+  },
+  {
+    "id": 32,
+    "branch": "0xfa6058",
+    "size": "0x40",
+    "types": [
+      ".?AVPartSockets@BHG@@"
+    ],
+    "vtables": [
+      "0x17568e4"
+    ]
+  },
+  {
+    "id": 33,
+    "branch": "0xfa6034",
+    "size": "0x38",
+    "types": [
+      ".?AVPartLockable@BHG@@"
+    ],
+    "vtables": [
+      "0x1756a64"
+    ]
+  },
+  {
+    "id": 34,
+    "branch": "0xfa6046",
+    "size": "0x5c",
+    "types": [
+      ".?AVPartInteraction@BHG@@"
+    ],
+    "vtables": [
+      "0x1755fe4"
+    ]
+  },
+  {
+    "id": 35,
+    "branch": "0xfa5ec9",
+    "size": "0x6c",
+    "types": [
+      ".?AVPartScript@BHG@@"
+    ],
+    "vtables": [
+      "0x1756564"
+    ]
+  },
+  {
+    "id": 36,
+    "branch": "0xfa607c",
+    "size": "0x2c",
+    "types": [
+      ".?AVPartTransport@BHG@@"
+    ],
+    "vtables": [
+      "0x1756ae4"
+    ]
+  },
+  {
+    "id": 37,
+    "branch": "0xfa5edb",
+    "size": "0x3c",
+    "types": [
+      ".?AVPartSchedule@BHG@@"
+    ],
+    "vtables": [
+      "0x17574dc"
+    ]
+  },
+  {
+    "id": 38,
+    "branch": "0xfa5f41",
+    "size": "0x84",
+    "types": [
+      ".?AVPartSense@BHG@@"
+    ],
+    "vtables": [
+      "0x1757254"
+    ]
+  },
+  {
+    "id": 39,
+    "branch": "0xfa60a3",
+    "size": "0x54",
+    "types": [
+      ".?AVPartComponent@BHG@@"
+    ],
+    "vtables": [
+      "0x1756fa4"
+    ]
+  },
+  {
+    "id": 40,
+    "branch": "0xfa60b5",
+    "size": "0x30",
+    "types": [
+      ".?AVPartCharacterCustomizationItem@BHG@@"
+    ],
+    "vtables": [
+      "0x1756bec"
+    ]
+  },
+  {
+    "id": 41,
+    "branch": "0xfa60c7",
+    "size": "0x30",
+    "types": [
+      ".?AVPartAttachToNodeAlias@BHG@@"
+    ],
+    "vtables": [
+      "0x1756c6c"
+    ]
+  },
+  {
+    "id": 42,
+    "branch": "0xfa5e27",
+    "size": "0x6c",
+    "types": [
+      ".?AVPartMotion@BHG@@"
+    ],
+    "vtables": [
+      "0x17561e4"
+    ]
+  }
+]

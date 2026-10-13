@@ -70,7 +70,7 @@ namespace Config
 
         Settings loaded{};
         loaded.MaxPlayers = ReadInt("Multiplayer", "MaxPlayers", loaded.MaxPlayers);
-        loaded.AutoConnect = ReadInt("Multiplayer", "AutoConnect", ToIniBool(loaded.AutoConnect)) != 0;
+        loaded.AutoConnect = false; // do not restore legacy auto-join behavior
         char serverAddress[64]{};
         GetPrivateProfileStringA("Multiplayer", "ServerAddress", loaded.ServerAddress, serverAddress, sizeof(serverAddress), Paths::GetConfigPath().c_str());
         strcpy_s(loaded.ServerAddress, serverAddress);

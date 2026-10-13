@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NetworkProtocol.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -75,6 +76,7 @@ namespace NetworkManager
         std::uint32_t SenderTick = 0;
         std::uint32_t PacketSequence = 0;
         std::uint8_t FlagA = 0;
+        AmalurNet::AnimationRequest Animation{};
         std::uint64_t ReceivedAtMs = 0; // receiver clock only; never serialized
     };
 
@@ -104,6 +106,7 @@ namespace NetworkManager
     void Disconnect();
 
     Mode GetMode();
+    std::uint32_t GetJoinGeneration();
     std::string GetStatusText();
     std::string GetModeText();
     Stats GetStats();

@@ -42,7 +42,7 @@ namespace EngineRuntime
 {
     uintptr_t RuntimeAddress(uintptr_t idaAddress)
     {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        static const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
         return (base && idaAddress >= kIdaImageBase)
             ? base + (idaAddress - kIdaImageBase)
             : 0;
@@ -53,16 +53,29 @@ namespace EngineRuntime
         if (!address || !destination || !size)
             return false;
 
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) ||
-            info.State != MEM_COMMIT || !IsReadableProtection(info.Protect))
+        // Runtime field reads cluster in a handful of committed heap regions.
+        // Re-querying every scalar is especially costly through sandbox hooks.
+        // Cache region permissions briefly; SEH still guards every actual copy.
+        struct Region { uintptr_t Begin = 0, End = 0; DWORD Stamp = 0; };
+        static thread_local Region regions[32]{};
+        static thread_local unsigned nextRegion = 0;
+        const DWORD now = GetTickCount();
+        Region* match = nullptr;
+        for (auto& region : regions)
         {
-            return false;
+            if (now - region.Stamp < 16 && address >= region.Begin && address < region.End &&
+                size <= region.End - address) { match = &region; break; }
         }
-
-        const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-        if (address > regionEnd || size > regionEnd - address)
-            return false;
+        if (!match)
+        {
+            MEMORY_BASIC_INFORMATION info{};
+            if (!VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) ||
+                info.State != MEM_COMMIT || !IsReadableProtection(info.Protect)) return false;
+            const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+            if (address >= regionEnd || size > regionEnd - address) return false;
+            match = &regions[nextRegion++ % 32];
+            *match = { reinterpret_cast<uintptr_t>(info.BaseAddress), regionEnd, now };
+        }
 
         __try
         {
@@ -71,6 +84,7 @@ namespace EngineRuntime
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
+            if (match) *match = {};
             std::memset(destination, 0, size);
             return false;
         }

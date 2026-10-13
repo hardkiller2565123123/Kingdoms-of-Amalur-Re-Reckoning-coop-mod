@@ -20,13 +20,17 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstddef>
 #include <mutex>
 #include <string>
+#include <cstring>
+#include <cmath>
+#include <map>
 
 namespace
 {
     constexpr uintptr_t kIdaImageBase = 0x00400000;
-    constexpr uintptr_t kMotionRequestIda = 0x00D1D840;
+    constexpr uintptr_t kMotionRequestIda = 0x00D1D5D0;
     constexpr uintptr_t kActorStateManagerGlobalIda = 0x019FDF54;
     constexpr uintptr_t kActorStateEntriesOffset = 0xC4;
     constexpr uintptr_t kActorStateCountOffset = 0xC8;
@@ -46,15 +50,27 @@ namespace
     constexpr ULONGLONG kDiagnosticLogIntervalMs = 10000;
     constexpr bool kEnableMotionHook = true;
 
-    using MotionRequestFn = int(__thiscall*)(
-        void* controller,
-        std::uint32_t motionHash,
-        std::int32_t requestedVariant,
-        std::int32_t parameterA,
-        std::uint8_t flagA,
-        uintptr_t localContext,
-        std::int32_t parameterB);
-
+    struct NativeBlend { float Values[6]{}; std::uint8_t Enabled = 0; std::uint8_t Padding[3]{}; };
+    static_assert(sizeof(NativeBlend) == 28);
+    // D1D5D0: ECX=rig asset, five stack arguments, RET 14h. These local
+    // pointers and resource handles never cross the network.
+    struct NativeRequest
+    {
+        std::uint32_t Owner = 0;
+        int ResourceA = 0, ResourceB = 0;
+        std::uint32_t Hash = 0, PreviousHash = 0;
+        std::int32_t Variants[4]{ -1, -1, -1, -1 };
+        float Weights[4]{ 1, 0, 0, 0 };
+        std::uint32_t ActorHandle = 0, StartOffset = 0;
+        float Speed = 1;
+        NativeBlend Blend{};
+        std::uint32_t Callback[2]{};
+        int Catalog = 0, CatalogIndex = -1;
+        std::uint8_t Flag = 0, Padding[3]{};
+    };
+    static_assert(sizeof(NativeRequest) == 0x70);
+    static_assert(offsetof(NativeRequest, Catalog) == 0x64);
+    using MotionRequestFn = void(__thiscall*)(void*, const NativeRequest*, int, int, void*, std::uint32_t*);
     MotionRequestFn oMotionRequest = nullptr;
     void* g_hookTarget = nullptr;
 
@@ -69,7 +85,7 @@ namespace
     std::atomic<int> g_localActorStateIndex{ -1 };
     std::atomic<int> g_remoteActorStateIndex{ -1 };
 
-    // These are the only values the D1D840 hook reads. They are populated on
+    // These are the only controller caches the clip-queue hook reads. They are populated on
     // the render/game thread so the hook never scans actor-state memory.
     std::atomic<uintptr_t> g_localControllerFast{ 0 };
     std::atomic<std::uint32_t> g_localPlayerIdFast{ 0 };
@@ -99,6 +115,12 @@ namespace
     std::array<NetworkManager::MotionEventPacket, kMaxQueuedOutgoingMotion> g_outgoingMotion{};
     std::size_t g_outgoingReadIndex = 0;
     std::size_t g_outgoingCount = 0;
+    std::array<NetworkManager::MotionEventPacket, 8> g_latestMotion{}; // protected by outgoing mutex
+    ULONGLONG g_nextStateResend = 0;
+    struct AppliedMotion { uintptr_t Controller = 0; std::uint32_t Sequence = 0; };
+    std::map<std::pair<std::uint32_t, std::uint8_t>, AppliedMotion> g_appliedMotion; // render thread only
+    std::atomic<std::uint64_t> g_hookCalls{ 0 }, g_localRequests{ 0 };
+
 
     // Render-thread-only staging; network ingress timestamps prevent old attacks
     // from replaying after a long pause or delayed proxy creation.
@@ -114,7 +136,7 @@ namespace
 
     uintptr_t RuntimeAddress(uintptr_t idaAddress)
     {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        static const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
         return (base && idaAddress >= kIdaImageBase)
             ? base + (idaAddress - kIdaImageBase)
             : 0;
@@ -124,29 +146,7 @@ namespace
     bool SafeRead(uintptr_t address, T& value)
     {
         value = {};
-        if (!address)
-            return false;
-
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)))
-            return false;
-        if (info.State != MEM_COMMIT || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
-            return false;
-
-        const uintptr_t end = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-        if (address + sizeof(T) > end)
-            return false;
-
-        __try
-        {
-            value = *reinterpret_cast<const T*>(address);
-            return true;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            value = {};
-            return false;
-        }
+        return EngineRuntime::Read(address, value);
     }
 
     bool IsReadableObject(uintptr_t address)
@@ -238,6 +238,8 @@ namespace
             g_status = status;
     }
 
+    void SeedDefaultMotion(uintptr_t controller);
+
     void AdoptLocalController(
         uintptr_t runtimeObject,
         uintptr_t controller,
@@ -271,6 +273,13 @@ namespace
         }
 
         g_localActorStateIndex.store(actorStateIndex, std::memory_order_release);
+        if (changed)
+        {
+            // Seed before publishing this controller to the hook, so an actual
+            // first transition cannot be overwritten by our idle seed.
+            g_localControllerFast.store(0, std::memory_order_release);
+            SeedDefaultMotion(controller);
+        }
         g_localControllerFast.store(controller, std::memory_order_release);
 
         // This log is emitted only when the verified cached controller changes.
@@ -396,6 +405,16 @@ namespace
         if (!lock.owns_lock())
             return false;
 
+        // Graph evaluation can enqueue the same clip every frame. Giving each
+        // copy a new serial makes the receiver clear/restart it continuously.
+        // Preserve the last serial until the actual clip/blend/track changes.
+        const auto& previous = g_latestMotion[packet.Animation.Track];
+        if (previous.MotionHash == packet.MotionHash &&
+            previous.RequestedVariant == packet.RequestedVariant &&
+            previous.ParameterA == packet.ParameterA && previous.FlagA == packet.FlagA &&
+            std::memcmp(&previous.Animation, &packet.Animation, sizeof(packet.Animation)) == 0)
+            return true;
+
         if (g_outgoingCount == kMaxQueuedOutgoingMotion)
         {
             g_outgoingReadIndex =
@@ -405,6 +424,7 @@ namespace
 
         const std::size_t writeIndex =
             (g_outgoingReadIndex + g_outgoingCount) % kMaxQueuedOutgoingMotion;
+        g_latestMotion[packet.Animation.Track] = packet;
         g_outgoingMotion[writeIndex] = packet;
         ++g_outgoingCount;
         return true;
@@ -423,69 +443,123 @@ namespace
         return true;
     }
 
-    void CaptureLocalMotion(
-        void* controller,
-        std::uint32_t motionHash,
-        std::int32_t requestedVariant,
-        std::int32_t parameterA,
-        std::int32_t parameterB,
-        std::uint8_t flagA)
+    // Key conversion is bounded native registry lookup, with no asset loading.
+    std::uint32_t ResourceKey(int handle, unsigned category)
     {
-        // Hot-hook rule: no actor-state scans, no VirtualQuery loops, no logger,
-        // no network mutex, and no blocking locks from inside sub_D1D840.
-        if (!g_canSendMotionFast.load(std::memory_order_acquire) ||
-            !IsLocalControllerFast(controller))
-        {
-            return;
-        }
-
-        const std::uint32_t actorNetId = g_localPlayerIdFast.load(std::memory_order_acquire);
-        if (!actorNetId)
-            return;
-
-        NetworkManager::MotionEventPacket packet{};
-        packet.ActorNetId = actorNetId;
-        packet.MotionHash = motionHash;
-        packet.RequestedVariant = requestedVariant;
-        packet.ParameterA = parameterA;
-        packet.ParameterB = parameterB;
-        packet.SenderTick = static_cast<std::uint32_t>(GetTickCount());
-        packet.PacketSequence = ++g_packetSequence;
-        packet.FlagA = flagA;
-
-        g_lastHash.store(packet.MotionHash, std::memory_order_release);
-        g_lastSequence.store(packet.PacketSequence, std::memory_order_release);
-
-        if (!TryQueueOutgoingMotion(packet))
-            ++g_droppedPackets;
+        if (handle < 2 || handle > 32767) return 0;
+        std::uint32_t descriptor = static_cast<std::uint32_t>(handle) | (category << 16);
+        using Key = std::uint32_t(__thiscall*)(void*);
+        return reinterpret_cast<Key>(RuntimeAddress(0x00A6FE10))(&descriptor);
     }
 
-    int __fastcall hMotionRequest(
-        void* controller,
-        void*,
-        std::uint32_t motionHash,
-        std::int32_t requestedVariant,
-        std::int32_t parameterA,
-        std::uint8_t flagA,
-        uintptr_t localContext,
-        std::int32_t parameterB)
+    bool CaptureRequestValues(void* controller, int resourceA, int resourceB,
+        const NativeBlend* blend, AmalurNet::AnimationRequest* out)
     {
-        CaptureLocalMotion(
-            controller,
-            motionHash,
-            requestedVariant,
-            parameterA,
-            parameterB,
-            flagA);
+        __try
+        {
+            out->RigKey = ResourceKey(*reinterpret_cast<int*>(
+                reinterpret_cast<uintptr_t>(controller) + 0xA4), 7);
+            out->ResourceKeyA = ResourceKey(resourceA, 8);
+            out->ResourceKeyB = ResourceKey(resourceB, 8);
+            if (!out->RigKey || (resourceA >= 2 && !out->ResourceKeyA) ||
+                (resourceB >= 2 && !out->ResourceKeyB) || !blend) return false;
+            // C8B3B0 initializes only Enabled. Other fields may be uninitialized
+            // when disabled, so do not copy them into a packet.
+            out->BlendEnabled = blend->Enabled != 0;
+            if (out->BlendEnabled)
+            {
+                std::memcpy(out->Blend, blend->Values, sizeof(out->Blend));
+                for (const auto value : out->Blend) if (!std::isfinite(value)) return false;
+            }
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
 
-        return oMotionRequest(
-            controller,
-            motionHash,
-            requestedVariant,
-            parameterA,
-            flagA,
-            localContext,
-            parameterB);
+    void SeedDefaultMotion(uintptr_t controller)
+    {
+        NetworkManager::MotionEventPacket packet{};
+        NativeBlend blend{};
+        if (CaptureRequestValues(reinterpret_cast<void*>(controller), 0, 0, &blend, &packet.Animation) &&
+            SafeRead(controller + 0xB0, packet.MotionHash) && packet.MotionHash)
+        {
+            // D3F050's native default request. Seed a stationary newly joined
+            // player even if its idle started before controller discovery.
+            packet.RequestedVariant = -1;
+            const float speed = 1;
+            std::memcpy(&packet.ParameterA, &speed, sizeof(speed));
+            packet.PacketSequence = ++g_packetSequence;
+            packet.SenderTick = GetTickCount();
+        }
+        std::lock_guard<std::mutex> lock(g_outgoingMutex);
+        // Do not overwrite an event captured concurrently after adoption.
+        if (g_latestMotion[0].PacketSequence && packet.PacketSequence &&
+            AmalurNet::IsNewer(g_latestMotion[0].PacketSequence, packet.PacketSequence)) return;
+        g_outgoingReadIndex = g_outgoingCount = 0;
+        g_latestMotion = {};
+        g_latestMotion[packet.Animation.Track] = packet;
+        g_nextStateResend = 0;
+    }
+
+    bool CaptureQueuedRequest(uintptr_t controller, const NativeRequest* request,
+        uintptr_t queue, NetworkManager::MotionEventPacket* packet)
+    {
+        __try
+        {
+            const auto owner = *reinterpret_cast<std::uint32_t*>(controller + 0xA8);
+            const auto tracks = *reinterpret_cast<uintptr_t*>(controller + 0x60);
+            const int count = *reinterpret_cast<int*>(controller + 0x64);
+            if (!owner || request->Owner != owner || request->ActorHandle != *reinterpret_cast<std::uint32_t*>(controller + 0xB4) || !tracks || count <= 0 || count > 64 || queue < tracks + 4) return false;
+            const auto offset = queue - tracks - 4;
+            if (offset % 0x5C || offset / 0x5C >= static_cast<unsigned>(count) || offset / 0x5C >= 8) return false;
+            if (!CaptureRequestValues(reinterpret_cast<void*>(controller), request->ResourceA,
+                request->ResourceB, &request->Blend, &packet->Animation)) return false;
+            packet->MotionHash = request->Hash;
+            packet->FlagA = request->Flag != 0;
+            packet->Animation.StartOffset = request->StartOffset;
+            packet->Animation.CatalogKey = ResourceKey(request->Catalog, 5);
+            if (!packet->Animation.CatalogKey) return false;
+            packet->Animation.Track = static_cast<std::uint8_t>(offset / 0x5C);
+            std::memcpy(&packet->ParameterA, &request->Speed, sizeof(float));
+            const int capacity = *reinterpret_cast<int*>(queue + 8);
+            const int write = *reinterpret_cast<int*>(queue + 0x18);
+            const int queued = *reinterpret_cast<int*>(queue + 0x1C);
+            const auto entries = *reinterpret_cast<uintptr_t*>(queue + 4);
+            if (!entries || capacity <= 0 || capacity > 4096 || write < 0 || write >= capacity || queued <= 0) return false;
+            const auto node = *reinterpret_cast<uintptr_t*>(entries + ((write + capacity - 1) % capacity) * 4);
+            if (!node) return false;
+            std::memcpy(packet->Animation.Variants, reinterpret_cast<void*>(node + 8), 16);
+            std::memcpy(packet->Animation.Weights, reinterpret_cast<void*>(node + 0x18), 16);
+            packet->Animation.SelectedVariants = 1;
+            packet->RequestedVariant = packet->Animation.Variants[0];
+            AmalurNet::Packet check{};
+            check.MotionHash = packet->MotionHash; check.ParameterA = packet->ParameterA;
+            check.FlagA = packet->FlagA; check.RequestedVariant = packet->RequestedVariant;
+            std::memcpy(check.VisualData, &packet->Animation, sizeof(packet->Animation));
+            return AmalurNet::ValidAnimation(check);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    void __fastcall hMotionRequest(void* rig, void*, const NativeRequest* request,
+        int state, int transition, void* queue, std::uint32_t* output)
+    {
+        // Call through exactly once. Capture after selection, while the caller's
+        // descriptor is still alive, so both peers use the same random variants.
+        ++g_hookCalls;
+        oMotionRequest(rig, request, state, transition, queue, output);
+        if (g_applyingRemoteMotion) return;
+        const auto controller = g_localControllerFast.load(std::memory_order_acquire);
+        if (!controller) return;
+        NetworkManager::MotionEventPacket packet{};
+        if (!CaptureQueuedRequest(controller, request, reinterpret_cast<uintptr_t>(queue), &packet)) return;
+        ++g_localRequests;
+        packet.ActorNetId = g_localPlayerIdFast.load(std::memory_order_acquire);
+        packet.PacketSequence = ++g_packetSequence;
+        packet.SenderTick = GetTickCount();
+        g_lastHash.store(packet.MotionHash, std::memory_order_release);
+        g_lastSequence.store(packet.PacketSequence, std::memory_order_release);
+        if (!TryQueueOutgoingMotion(packet)) ++g_droppedPackets;
     }
 
     uintptr_t ResolveRemoteController(std::uint32_t actorNetId)
@@ -572,47 +646,181 @@ namespace
         return 0;
     }
 
+    // Resolve resources locally; the queue node takes its own optional references.
+    int ResolveResource(unsigned category, std::uint32_t key)
+    {
+        if (!key) return 0;
+        auto* manager = *reinterpret_cast<void**>(RuntimeAddress(
+            category == 5 ? 0x019F4D44 : category == 7 ? 0x019F4D4C : 0x019F4D50));
+        if (!manager) return -1;
+        using Resolve = int(__thiscall*)(void*, std::uint32_t);
+        using Lookup = void*(__thiscall*)(void*, int, int);
+        const int handle = reinterpret_cast<Resolve>(RuntimeAddress(0x00A70B80))(manager, key);
+        if (handle < 2 || !reinterpret_cast<Lookup>(RuntimeAddress(0x00A71E80))(manager, handle, 1)) return -1;
+        const auto flags = *reinterpret_cast<std::uint8_t**>(reinterpret_cast<uintptr_t>(manager) + 0x28);
+        return (flags[handle] & 0x14) == 4 ? handle : -1;
+    }
+
     bool GuardedReplay(uintptr_t controller, const NetworkManager::MotionEventPacket& packet)
     {
-        if (!oMotionRequest || !controller)
-            return false;
-
+        if (!oMotionRequest || !controller || !packet.Animation.RigKey || packet.Animation.Track >= 8) return false;
         __try
         {
-            const int result = oMotionRequest(
-                reinterpret_cast<void*>(controller),
-                packet.MotionHash,
-                packet.RequestedVariant,
-                packet.ParameterA,
-                packet.FlagA,
-                0,
-                packet.ParameterB);
-            return result != -1;
+            NativeRequest request{};
+            request.Owner = *reinterpret_cast<std::uint32_t*>(controller + 0xA8);
+            request.ActorHandle = *reinterpret_cast<std::uint32_t*>(controller + 0xB4);
+            if (!request.Owner || *reinterpret_cast<int*>(controller + 0xAC) < 2) return false;
+            const int rig = ResolveResource(7, packet.Animation.RigKey);
+            request.ResourceA = ResolveResource(8, packet.Animation.ResourceKeyA);
+            request.ResourceB = ResolveResource(8, packet.Animation.ResourceKeyB);
+            if (rig < 2 || request.ResourceA < 0 || request.ResourceB < 0) return false;
+            const int currentRig = *reinterpret_cast<int*>(controller + 0xA4);
+            if (currentRig >= 2 && currentRig != rig) return false;
+            if (currentRig < 2)
+            {
+                using Bind = void(__thiscall*)(void*, const int*);
+                reinterpret_cast<Bind>(RuntimeAddress(0x00CB45F0))(reinterpret_cast<void*>(controller), &rig);
+            }
+            using Lookup = void*(__thiscall*)(void*, int, int);
+            void* manager = *reinterpret_cast<void**>(RuntimeAddress(0x019F4D4C));
+            void* rigAsset = reinterpret_cast<Lookup>(RuntimeAddress(0x00A71E80))(manager, rig, 1);
+            if (!rigAsset) return false;
+            request.Hash = packet.MotionHash;
+            request.StartOffset = packet.Animation.StartOffset;
+            request.Flag = packet.FlagA;
+            std::memcpy(&request.Speed, &packet.ParameterA, 4);
+            request.Blend.Enabled = packet.Animation.BlendEnabled;
+            std::memcpy(request.Blend.Values, packet.Animation.Blend, sizeof(request.Blend.Values));
+            if (packet.Animation.SelectedVariants)
+            {
+                std::memcpy(request.Variants, packet.Animation.Variants, 16);
+                std::memcpy(request.Weights, packet.Animation.Weights, 16);
+            }
+            // Resolve the clip against the receiver's model. Never trust a
+            // sender's catalog handle/index or copy its callback pointers.
+            if (packet.Animation.CatalogKey)
+            {
+                request.Catalog = ResolveResource(5, packet.Animation.CatalogKey);
+                if (request.Catalog < 2) return false;
+                // Only borrow catalogs already owned by this receiver's model.
+                // Graph active-mask differences must not reject a valid clip,
+                // but the queue must not outlive an unowned resource either.
+                const int modelHandle = *reinterpret_cast<int*>(request.Owner + 0x198);
+                using LookupModel = uintptr_t(__thiscall*)(void*, int);
+                auto* modelManager = *reinterpret_cast<void**>(RuntimeAddress(0x019FDF54));
+                const auto model = reinterpret_cast<LookupModel>(RuntimeAddress(0x00A6DF80))(modelManager, modelHandle);
+                if (!model) return false;
+                bool owned = *reinterpret_cast<int*>(request.Owner + 0x1B4) == request.Catalog;
+                const int catalogCount = *reinterpret_cast<int*>(model + 0x190);
+                const auto catalogs = *reinterpret_cast<const int**>(model + 0x18C);
+                if (catalogCount < 0 || catalogCount > 4096 || (catalogCount && !catalogs)) return false;
+                for (int i = 0; !owned && i < catalogCount; ++i) owned = catalogs[i] == request.Catalog;
+                if (!owned) return false;
+                auto* assets = *reinterpret_cast<void**>(RuntimeAddress(0x019F4D44));
+                const auto catalog = reinterpret_cast<uintptr_t>(reinterpret_cast<Lookup>(RuntimeAddress(0x00A71E80))(assets, request.Catalog, 1));
+                if (!catalog) return false;
+                const int namesCount = *reinterpret_cast<int*>(catalog + 4);
+                const auto names = *reinterpret_cast<const std::uint32_t**>(catalog + 8);
+                const int entryCount = *reinterpret_cast<int*>(catalog + 0x10);
+                const auto entries = *reinterpret_cast<uintptr_t*>(catalog + 0x14);
+                if (!names || !entries || namesCount <= 0 || namesCount > 65536 || entryCount < namesCount) return false;
+                for (int i = 0; i < namesCount; ++i)
+                    if (names[i] == request.Hash) { request.CatalogIndex = i; break; }
+                if (request.CatalogIndex < 0) return false;
+                const int variants = *reinterpret_cast<int*>(entries + request.CatalogIndex * 16);
+                if (variants <= 0 || variants > 65536) return false;
+                for (int variant : request.Variants) if (variant < -1 || variant >= variants) return false;
+            }
+            else
+            {
+                using ResolveClip = bool(__thiscall*)(void*, NativeRequest*);
+                if (!reinterpret_cast<ResolveClip>(RuntimeAddress(0x00CE71D0))(rigAsset, &request)) return false;
+            }
+            int count = *reinterpret_cast<int*>(controller + 0x64);
+            if (count < 0 || count > 64) return false;
+            while (count <= packet.Animation.Track)
+            {
+                using CreateTrack = void(__thiscall*)(void*, int);
+                reinterpret_cast<CreateTrack>(RuntimeAddress(0x00D3EBF0))(reinterpret_cast<void*>(controller), count);
+                const int next = *reinterpret_cast<int*>(controller + 0x64);
+                if (next <= count || next > 64) return false;
+                count = next;
+            }
+            const auto tracks = *reinterpret_cast<uintptr_t*>(controller + 0x60);
+            if (!tracks) return false;
+            const auto queue = tracks + packet.Animation.Track * 0x5C + 4;
+            // Blend weights/speed can change each frame without changing the
+            // clip. Update the sole current queue node in place so its playback
+            // clock survives. Only reuse an exact catalog/variant/resource match.
+            const int queued = *reinterpret_cast<int*>(queue + 0x1C);
+            const int capacity = *reinterpret_cast<int*>(queue + 8);
+            const int read = *reinterpret_cast<int*>(queue + 0x14);
+            const auto slots = *reinterpret_cast<uintptr_t*>(queue + 4);
+            if (queued == 1 && slots && capacity > 0 && capacity <= 4096 && read >= 0 && read < capacity)
+            {
+                const auto node = *reinterpret_cast<uintptr_t*>(slots + read * 4);
+                if (node && *reinterpret_cast<int*>(node + 4) == request.CatalogIndex &&
+                    *reinterpret_cast<int*>(node + 0x2C) == request.Catalog &&
+                    *reinterpret_cast<int*>(node + 0x30) == request.ResourceA &&
+                    *reinterpret_cast<int*>(node + 0x34) == request.ResourceB &&
+                    *reinterpret_cast<std::uint32_t*>(node + 0x40) == request.StartOffset &&
+                    *reinterpret_cast<std::uint8_t*>(node + 0x68) == request.Flag &&
+                    !std::memcmp(reinterpret_cast<void*>(node + 8), request.Variants, 16))
+                {
+                    std::memcpy(reinterpret_cast<void*>(node + 0x18), request.Weights, 16);
+                    std::memcpy(reinterpret_cast<void*>(node + 0x28), &request.Speed, 4);
+                    std::memcpy(reinterpret_cast<void*>(node + 0x44), &request.Blend, sizeof(request.Blend));
+                    return true;
+                }
+            }
+            using Clear = void(__thiscall*)(void*);
+            reinterpret_cast<Clear>(RuntimeAddress(0x00CE6910))(reinterpret_cast<void*>(queue));
+            // D1D5D0 retains its own optional resource references. Our stack
+            // descriptor borrows handles and must not retain/release them again.
+            oMotionRequest(rigAsset, &request, 0, -1, reinterpret_cast<void*>(queue), nullptr);
+            *reinterpret_cast<std::uint8_t*>(queue + 0x20) |= 1;
+            return true;
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return false;
-        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
     void FlushOutgoingMotion()
     {
+        if (!g_canSendMotionFast.load(std::memory_order_acquire)) return;
+        bool sent = false;
         for (int processed = 0; processed < kMaxOutgoingMotionPerPump; ++processed)
         {
             NetworkManager::MotionEventPacket packet{};
-            if (!TryPopOutgoingMotion(packet))
-                break;
-
-            if (NetworkManager::SendMotionEvent(packet))
-            {
-                ++g_sentPackets;
-            }
+            if (!TryPopOutgoingMotion(packet)) break;
+            if (GetTickCount() - packet.SenderTick > 750) continue;
+            if (NetworkManager::SendMotionEvent(packet)) { ++g_sentPackets; sent = true; }
             else
             {
-                ++g_droppedPackets;
+                // Network worker is busy: retry this event next frame instead
+                // of blocking Present or losing a short attack transition.
+                std::lock_guard<std::mutex> lock(g_outgoingMutex);
+                if (g_outgoingCount < kMaxQueuedOutgoingMotion)
+                {
+                    g_outgoingReadIndex = (g_outgoingReadIndex + kMaxQueuedOutgoingMotion - 1) % kMaxQueuedOutgoingMotion;
+                    g_outgoingMotion[g_outgoingReadIndex] = packet; ++g_outgoingCount;
+                }
+                else ++g_droppedPackets;
+                break;
             }
         }
+        const auto now = GetTickCount64();
+        if (sent) g_nextStateResend = now + 1000;
+        if (now < g_nextStateResend) return;
+        g_nextStateResend = now + 1000;
+        std::array<NetworkManager::MotionEventPacket, 8> latest{};
+        {
+            std::lock_guard<std::mutex> lock(g_outgoingMutex);
+            latest = g_latestMotion;
+        }
+        for (const auto& state : latest)
+            if (state.MotionHash && NetworkManager::SendMotionEvent(state)) ++g_sentPackets;
     }
+
 }
 
 namespace MotionReplication
@@ -637,10 +845,19 @@ namespace MotionReplication
             SetStatus("Motion hook target address unavailable");
             Logger::Write(
                 Logger::Level::Error,
-                "Motion replication hook skipped: sub_D1D840 target address unavailable");
+                "Motion replication hook skipped: sub_D1D5D0 target address unavailable");
             return;
         }
 
+        const std::uint8_t expected[]{ 0x51, 0x53, 0x55, 0x56, 0x57, 0x8B, 0x7C, 0x24, 0x18 };
+        std::uint8_t actual[sizeof(expected)]{};
+        if (!EngineRuntime::ReadBytes(target, actual, sizeof(actual)) ||
+            std::memcmp(actual, expected, sizeof(actual)))
+        {
+            SetStatus("Animation ABI signature mismatch");
+            Logger::Write(Logger::Level::Error, "D1D5D0 signature mismatch; animation hook not installed");
+            return;
+        }
         g_hookTarget = reinterpret_cast<void*>(target);
 
         MH_STATUS status = MH_CreateHook(
@@ -677,7 +894,7 @@ namespace MotionReplication
         SetStatus("Motion hook installed - no-scan mode");
         Logger::WriteFormat(
             Logger::Level::Success,
-            "Motion replication hook installed: sub_D1D840 runtime=0x%08X (no-scan hot path)",
+            "Motion replication hook installed: sub_D1D5D0 runtime=0x%08X (no-scan hot path)",
             static_cast<unsigned int>(target));
     }
 
@@ -696,6 +913,7 @@ namespace MotionReplication
             std::lock_guard<std::mutex> lock(g_outgoingMutex);
             g_outgoingReadIndex = 0;
             g_outgoingCount = 0;
+            g_latestMotion = {};
         }
 
         g_localControllerFast.store(0, std::memory_order_release);
@@ -713,8 +931,8 @@ namespace MotionReplication
             return;
 
         // All controller discovery and network work happens here instead of in
-        // D1D840. The hook itself is now a constant-time pointer comparison and
-        // a non-blocking queue attempt.
+        // D1D5D0. The hook does an owner comparison, bounded resource-key
+        // lookups for the local player only, and a non-blocking queue attempt.
         RefreshNetworkFastState();
         RefreshLocalControllerCache();
         FlushOutgoingMotion();
@@ -751,12 +969,18 @@ namespace MotionReplication
                 continue;
             }
 
+            const auto applied = g_appliedMotion.find({ packet.ActorNetId, packet.Animation.Track });
+            if (applied != g_appliedMotion.end() && applied->second.Controller == controller &&
+                (packet.PacketSequence == applied->second.Sequence ||
+                 !AmalurNet::IsNewer(packet.PacketSequence, applied->second.Sequence))) continue;
+
             g_applyingRemoteMotion = true;
             const bool replayed = GuardedReplay(controller, packet);
             g_applyingRemoteMotion = false;
 
             if (replayed)
             {
+                g_appliedMotion[{ packet.ActorNetId, packet.Animation.Track }] = { controller, packet.PacketSequence };
                 ++g_replayCount;
                 SetStatus("Remote motion replayed");
             }
@@ -770,7 +994,7 @@ namespace MotionReplication
                 {
                     g_lastReplayDropLog = now;
                     Logger::WriteFormat(
-                        Logger::Level::Error,
+                        Logger::Level::Warning,
                         "Motion replay failed actor=%u hash=0x%08X controller=0x%08X",
                         packet.ActorNetId,
                         packet.MotionHash,
@@ -782,15 +1006,16 @@ namespace MotionReplication
         {
             g_lastMotionSummary = now;
             Logger::WriteFormat(Logger::Level::Debug,
-                "Motion counters sent=%llu received=%llu replayed=%llu dropped=%llu pending=%u local=0x%08X",
+                "Motion counters sent=%llu received=%llu replayed=%llu dropped=%llu pending=%u local=0x%08X hook=%llu localRequests=%llu",
                 g_sentPackets.load(), g_receivedPackets.load(), g_replayCount.load(), g_droppedPackets.load(),
-                static_cast<unsigned>(g_pendingIncoming.size()), static_cast<unsigned>(g_localControllerFast.load()));
+                static_cast<unsigned>(g_pendingIncoming.size()), static_cast<unsigned>(g_localControllerFast.load()), g_hookCalls.load(), g_localRequests.load());
         }
     }
 
     void InvalidateRemoteController(std::uint32_t actorNetId)
     {
-        (void)actorNetId;
+        for (auto it = g_appliedMotion.begin(); it != g_appliedMotion.end();)
+            if (it->first.first == actorNetId) it = g_appliedMotion.erase(it); else ++it;
         g_remoteActorStateIndex.store(-1, std::memory_order_release);
 
         std::lock_guard<std::mutex> lock(g_stateMutex);
@@ -810,6 +1035,8 @@ namespace MotionReplication
     void ResetForWorldTransition()
     {
         g_pendingIncoming.clear();
+        g_appliedMotion.clear();
+        g_nextStateResend = 0;
         g_localControllerFast.store(0, std::memory_order_release);
         g_localPlayerIdFast.store(0, std::memory_order_release);
         g_canSendMotionFast.store(false, std::memory_order_release);
@@ -820,6 +1047,7 @@ namespace MotionReplication
             std::lock_guard<std::mutex> lock(g_outgoingMutex);
             g_outgoingReadIndex = 0;
             g_outgoingCount = 0;
+            g_latestMotion = {};
         }
 
         {

@@ -99,6 +99,7 @@ namespace
     uintptr_t g_worldLocalRuntime = 0;
     std::uint32_t g_worldLocalHandle = 0;
     ULONGLONG g_worldStableSince = 0;
+    std::uint32_t g_arrivedJoin = 0; // render thread; once per explicit Join
     bool g_manualDummy = false;
     GameState::Vec3 g_dummyPosition{};
     std::string g_status = "Waiting for remote players";
@@ -583,6 +584,26 @@ namespace RemotePlayerManager
         const auto peers = NetworkManager::GetPeers();
         const ULONGLONG now = GetTickCount64();
         const bool worldReady = UpdateWorldGate();
+        const auto join = NetworkManager::GetJoinGeneration();
+        if (worldReady && join && join != g_arrivedJoin && NetworkManager::GetMode() == NetworkManager::Mode::Client)
+        {
+            for (const auto& host : peers)
+            {
+                if (host.PlayerId != 1 || !host.Connected || !host.HasTransform ||
+                    !host.LastTransformMs || now - host.LastTransformMs > kRemoteTransformTimeoutMs) continue;
+                const auto transform = PositionTracker::GetTransformComponent();
+                const EngineVec4 arrival{ host.Position.X + 100.0f, host.Position.Y, host.Position.Z, 1.0f };
+                if (EngineRuntime::IsActiveComponent(transform) &&
+                    std::isfinite(arrival.X) && std::isfinite(arrival.Y) && std::isfinite(arrival.Z) &&
+                    CallSetWorldPosition(transform, arrival))
+                {
+                    if (host.HasRotation) ApplyRotation(transform, host.Rotation);
+                    g_arrivedJoin = join;
+                    Logger::Write("Joined character positioned beside host after local world became ready");
+                }
+                break;
+            }
+        }
         std::set<std::uint32_t> activeIds;
 
         struct Move

@@ -1,6 +1,7 @@
 #include "PositionTracker.h"
 
 #include "Logger.h"
+#include "EngineRuntime.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -61,7 +62,7 @@ namespace
 
     uintptr_t RuntimeAddress(uintptr_t idaAddress)
     {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        static const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
         return base ? base + (idaAddress - kIdaImageBase) : 0;
     }
 
@@ -69,30 +70,7 @@ namespace
     bool SafeRead(uintptr_t address, T& value)
     {
         value = {};
-        if (!address)
-            return false;
-
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)))
-            return false;
-
-        if (info.State != MEM_COMMIT || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
-            return false;
-
-        const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-        if (address + sizeof(T) > regionEnd)
-            return false;
-
-        __try
-        {
-            value = *reinterpret_cast<const T*>(address);
-            return true;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            value = {};
-            return false;
-        }
+        return EngineRuntime::Read(address, value);
     }
 
     bool IsValidCoordinate(float value)
@@ -181,7 +159,8 @@ namespace
         g_lastTitleTick = now;
         char title[256]{};
         sprintf_s(title, "AmalurCoop // X %.2f Y %.2f Z %.2f", position.X, position.Y, position.Z);
-        SetConsoleTitleA(title);
+        if (const HWND console = GetConsoleWindow(); console && IsWindowVisible(console))
+            SetConsoleTitleA(title);
     }
 }
 

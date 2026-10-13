@@ -1383,10 +1383,15 @@ namespace
 
         // Actor creation touches world/graphics systems and must run from the
         // game's render thread rather than the background network thread.
+        const auto beforeTracker = FrameClock::now();
         PositionTracker::Update();
+        const auto afterTracker = FrameClock::now();
         NetworkManager::CaptureLocalSnapshot();
+        const auto afterSnapshot = FrameClock::now();
         RemotePlayerManager::Update();
+        const auto afterRemote = FrameClock::now();
         RemotePlayerManager::PumpGameThread();
+        const auto afterPump = FrameClock::now();
 
         ReconcileCursor();
         if (g_rendererReady.load() && g_renderTarget && g_menuOpen.load())
@@ -1414,6 +1419,11 @@ namespace
 
         // Exclude our intentional frame cap and the driver's Present wait.
         static double totalWorkMs = 0, peakWorkMs = 0;
+        static double trackerMs = 0, snapshotMs = 0, remoteMs = 0, pumpMs = 0;
+        trackerMs += std::chrono::duration<double, std::milli>(afterTracker - beforeTracker).count();
+        snapshotMs += std::chrono::duration<double, std::milli>(afterSnapshot - afterTracker).count();
+        remoteMs += std::chrono::duration<double, std::milli>(afterRemote - afterSnapshot).count();
+        pumpMs += std::chrono::duration<double, std::milli>(afterPump - afterRemote).count();
         static unsigned measuredFrames = 0;
         static auto lastReport = FrameClock::now();
         const auto workEnd = FrameClock::now();
@@ -1424,6 +1434,10 @@ namespace
             Logger::WriteFormat(Logger::Level::Debug,
                 "Mod frame work avg=%.3fms peak=%.3fms frames=%u focus=%s cap=%d",
                 totalWorkMs / measuredFrames, peakWorkMs, measuredFrames, foreground ? "foreground" : "background", fpsLimit);
+            Logger::WriteFormat(Logger::Level::Debug,
+                "Mod stage averages tracker=%.3fms snapshot=%.3fms remote=%.3fms spawn/visual/motion=%.3fms",
+                trackerMs / measuredFrames, snapshotMs / measuredFrames, remoteMs / measuredFrames, pumpMs / measuredFrames);
+            trackerMs = snapshotMs = remoteMs = pumpMs = 0;
             totalWorkMs = peakWorkMs = 0; measuredFrames = 0; lastReport = workEnd;
         }
         return g_originalPresent ? g_originalPresent(swapChain, syncInterval, flags) : S_OK;

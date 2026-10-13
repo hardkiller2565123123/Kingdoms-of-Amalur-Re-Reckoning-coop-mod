@@ -19,6 +19,7 @@
 #include "Logger.h"
 #include "MemoryScanner.h"
 #include "NetworkManager.h"
+#include "MainMenuMultiplayer.h"
 #include "PositionTracker.h"
 #include "RemotePlayerManager.h"
 #include "RuntimeInspector.h"
@@ -284,6 +285,7 @@ namespace
         LobbyManager::Update();
         CombatScaler::Update();
         RuntimeInspector::Update();
+        MainMenuMultiplayer::PumpNetworkCommands();
         NetworkManager::Update();
         GameState::Update();
     }

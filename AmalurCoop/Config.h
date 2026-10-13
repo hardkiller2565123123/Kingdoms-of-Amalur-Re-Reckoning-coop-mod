@@ -5,7 +5,7 @@ namespace Config
     struct Settings
     {
         int MaxPlayers = 4;
-        bool AutoConnect = true;
+        bool AutoConnect = false; // legacy INI field; sessions require Host/Join
         char ServerAddress[64] = "auto";
         int ServerPort = 7777;
         bool EnableScaling = true;

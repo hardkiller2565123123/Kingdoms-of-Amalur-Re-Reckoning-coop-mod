@@ -94,6 +94,7 @@ namespace
     SOCKET g_socket = INVALID_SOCKET;
     bool g_winsockReady = false;
     std::atomic<NetworkManager::Mode> g_mode{ NetworkManager::Mode::Offline };
+    std::atomic<std::uint32_t> g_joinGeneration{ 0 };
 
     sockaddr_in g_server{};
     bool g_hasServer = false;
@@ -103,6 +104,7 @@ namespace
     std::vector<PeerState> g_peers;
     std::vector<DiscoveredHostState> g_discoveredHosts;
     std::deque<NetworkManager::MotionEventPacket> g_motionQueue;
+    std::deque<NetworkManager::MotionEventPacket> g_motionOutgoing;
 
     std::uint32_t g_localPlayerId = 0;
     std::uint32_t g_nextHostPlayerId = 2;
@@ -341,6 +343,7 @@ namespace
         g_autoDiscover = false;
         g_peers.clear();
         g_motionQueue.clear();
+        g_motionOutgoing.clear();
         g_localPlayerId = 0;
         g_nextHostPlayerId = 2;
         g_sequence = 0;
@@ -446,24 +449,22 @@ namespace
             static_cast<int>(std::max<std::size_t>(1u, playerCount)));
     }
 
-    bool ResolveServer(const std::string& address, unsigned short port)
+    bool ResolveEndpoint(const std::string& address, unsigned short port, sockaddr_in& server, bool& autoDiscover)
     {
-        g_server = {};
-        g_server.sin_family = AF_INET;
-        g_server.sin_port = htons(port);
+        server = {};
+        server.sin_family = AF_INET;
+        server.sin_port = htons(port);
 
         if (address.empty() || address == "auto")
         {
-            g_server.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-            g_autoDiscover = true;
-            g_hasServer = true;
+            server.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            autoDiscover = true;
             return true;
         }
 
-        g_autoDiscover = false;
-        if (inet_pton(AF_INET, address.c_str(), &g_server.sin_addr) == 1)
+        autoDiscover = false;
+        if (inet_pton(AF_INET, address.c_str(), &server.sin_addr) == 1)
         {
-            g_hasServer = true;
             return true;
         }
 
@@ -475,10 +476,15 @@ namespace
         if (getaddrinfo(address.c_str(), nullptr, &hints, &result) != 0 || !result)
             return false;
 
-        g_server.sin_addr = reinterpret_cast<sockaddr_in*>(result->ai_addr)->sin_addr;
+        server.sin_addr = reinterpret_cast<sockaddr_in*>(result->ai_addr)->sin_addr;
         freeaddrinfo(result);
-        g_hasServer = true;
         return true;
+    }
+
+    bool ResolveServer(const std::string& address, unsigned short port)
+    {
+        g_hasServer = ResolveEndpoint(address, port, g_server, g_autoDiscover);
+        return g_hasServer;
     }
 
     void BroadcastHostPacket(Packet packet, std::uint32_t exceptPlayerId = 0)
@@ -489,6 +495,31 @@ namespace
                 continue;
             SendTo(peer.Address, packet);
         }
+    }
+
+    bool SendMotionNow(const NetworkManager::MotionEventPacket& event)
+    {
+        if (!g_localPlayerId) return false;
+        Packet packet{};
+        packet.Type = PacketType::MotionEvent;
+        packet.PlayerId = g_localPlayerId;
+        packet.Sequence = ++g_sequence;
+        packet.MotionHash = event.MotionHash;
+        packet.RequestedVariant = event.RequestedVariant;
+        packet.ParameterA = event.ParameterA;
+        packet.ParameterB = event.ParameterB;
+        packet.SenderTick = event.SenderTick;
+        packet.PacketSequence = event.PacketSequence; // zero is valid after wraparound
+        packet.FlagA = event.FlagA;
+        std::memcpy(packet.VisualData, &event.Animation, sizeof(event.Animation));
+
+        if (g_mode.load(std::memory_order_acquire) == NetworkManager::Mode::Host)
+        {
+            BroadcastHostPacket(packet);
+            return true;
+        }
+
+        return g_hasServer && SendTo(g_server, packet);
     }
 
     NetworkManager::PlayerSnapshot BuildLocalSnapshot()
@@ -613,8 +644,9 @@ namespace
         event.ParameterA = packet.ParameterA;
         event.ParameterB = packet.ParameterB;
         event.SenderTick = packet.SenderTick;
-        event.PacketSequence = sequence;
+        event.PacketSequence = packet.PacketSequence; // animation state serial, independent of transport retries
         event.FlagA = packet.FlagA;
+        std::memcpy(&event.Animation, packet.VisualData, sizeof(event.Animation));
         event.ReceivedAtMs = NowMs();
 
         if (g_motionQueue.size() >= 128)
@@ -696,7 +728,7 @@ namespace
         }
         else if (auto* host = FindPeer(1))
             QueueVisual(g_server, *host, g_localPlayerId, g_localVisualRevision, g_localVisual, now);
-        for (unsigned i = 0; i < 32 && !g_visualOutgoing.empty(); ++i)
+        for (unsigned i = 0; i < 8 && !g_visualOutgoing.empty(); ++i)
         {
             auto job = std::move(g_visualOutgoing.front()); g_visualOutgoing.pop_front();
             if (g_mode.load() == NetworkManager::Mode::Host)
@@ -759,7 +791,7 @@ namespace
         case PacketType::MotionEvent:
         {
             const auto seq = packet.Sequence;
-            if (!packet.MotionHash || packet.FlagA > 1 ||
+            if (!AmalurNet::ValidAnimation(packet) ||
                 (peer.HasMotionSequence && !AmalurNet::IsNewer(seq, peer.LastMotionSequence)))
                 return false;
             QueueMotion(packet, peer);
@@ -918,6 +950,7 @@ namespace
             g_localPlayerId = 0;
             g_peers.clear();
             g_motionQueue.clear();
+            g_motionOutgoing.clear();
             g_visualOutgoing.clear();
             g_sessionId = 0;
             g_connectionId = NewConnectionId();
@@ -1231,13 +1264,16 @@ namespace NetworkManager
         bool capture = false;
         std::uint64_t captureSession = 0, captureConnection = 0;
         {
-            std::lock_guard<std::mutex> lock(g_mutex);
+            std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+            if (!lock.owns_lock()) return;
             captureSession = g_sessionId; captureConnection = g_connectionId;
-            capture = g_localPlayerId && now - g_lastVisualCapture >= 1000;
+            capture = g_localPlayerId && now - g_lastVisualCapture >= 1000 &&
+                std::any_of(g_peers.begin(), g_peers.end(), [](const PeerState& peer) { return peer.Connected; });
             if (capture) g_lastVisualCapture = now;
         }
         const bool captured = capture && CharacterVisualRuntime::Capture(visual);
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock()) return;
         if (captureSession != g_sessionId || captureConnection != g_connectionId) return;
         g_hasLocalRotation = hasRotation;
         if (hasRotation) std::memcpy(g_localRotation, rotation, sizeof(rotation));
@@ -1287,25 +1323,9 @@ namespace NetworkManager
         const Config::Settings settings = Config::Get();
         g_port = static_cast<std::uint16_t>(settings.ServerPort);
 
-        if (settings.AutoConnect)
-        {
-            if (!ResolveServer(settings.ServerAddress, g_port))
-            {
-                g_status = "Invalid server address";
-                g_mode.store(Mode::Offline, std::memory_order_release);
-                return;
-            }
-
-            g_mode.store(Mode::Client, std::memory_order_release);
-            g_status = g_autoDiscover
-                ? "Searching for an AmalurCoop host"
-                : "Connecting to AmalurCoop host";
-        }
-        else
-        {
-            g_mode.store(Mode::Offline, std::memory_order_release);
-            g_status = "Offline";
-        }
+        // Ignore legacy AutoConnect settings: entering a session is explicit.
+        g_mode.store(Mode::Offline, std::memory_order_release);
+        g_status = "Offline - choose Multiplayer Host or Join";
 
         Logger::Write(g_status);
     }
@@ -1344,7 +1364,8 @@ namespace NetworkManager
             return;
 
         // Bound receive work so a busy socket cannot starve heartbeats/game work.
-        for (unsigned int budget = 0; budget < 256; ++budget)
+        const auto receiveStart = NowMs();
+        for (unsigned int budget = 0; budget < 32 && NowMs() - receiveStart < 2; ++budget)
         {
             Packet packet{};
             sockaddr_in from{};
@@ -1415,6 +1436,7 @@ namespace NetworkManager
                 g_localPlayerId = 0;
                 g_peers.clear();
                 g_motionQueue.clear();
+                g_motionOutgoing.clear();
                 g_visualOutgoing.clear();
                 g_sessionId = 0;
                 g_connectionId = NewConnectionId();
@@ -1451,6 +1473,11 @@ namespace NetworkManager
             }
         }
 
+        for (unsigned sent = 0; sent < 8 && !g_motionOutgoing.empty(); ++sent)
+        {
+            const auto event = g_motionOutgoing.front(); g_motionOutgoing.pop_front();
+            SendMotionNow(event);
+        }
         PumpVisuals(now);
         PruneDiscoveredHosts(now);
     }
@@ -1490,6 +1517,10 @@ namespace NetworkManager
 
     bool Join(const std::string& address, unsigned short port)
     {
+        // DNS can block for seconds; never hold the render-visible state
+        // mutex while resolving a hostname. Native menu calls this on worker.
+        sockaddr_in server{}; bool autoDiscover = false;
+        const bool resolved = ResolveEndpoint(address, port, server, autoDiscover);
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_winsockReady)
             return false;
@@ -1504,13 +1535,15 @@ namespace NetworkManager
             return false;
         }
 
-        if (!ResolveServer(address, port))
+        if (!resolved)
         {
             g_status = "Invalid host address";
             g_mode.store(Mode::Offline, std::memory_order_release);
             return false;
         }
 
+        g_server = server; g_autoDiscover = autoDiscover; g_hasServer = true;
+        ++g_joinGeneration;
         g_mode.store(Mode::Client, std::memory_order_release);
         g_status = g_autoDiscover
             ? "Searching for an AmalurCoop host"
@@ -1547,10 +1580,16 @@ namespace NetworkManager
         return g_mode.load(std::memory_order_acquire);
     }
 
+    std::uint32_t GetJoinGeneration() { return g_joinGeneration.load(std::memory_order_acquire); }
+
     std::string GetStatusText()
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        return g_status;
+        // Native menu updates and the overlay run on the render thread.
+        // Keep their last status while the network worker owns the lock.
+        static thread_local std::string cached = "Updating session...";
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (lock.owns_lock()) cached = g_status;
+        return cached;
     }
 
     std::string GetModeText()
@@ -1568,7 +1607,10 @@ namespace NetworkManager
 
     Stats GetStats()
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        static thread_local Stats cached{};
+        static thread_local std::uint64_t cachedAt = 0;
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock()) return NowMs() - cachedAt <= 250 ? cached : Stats{};
 
         Stats stats{};
         stats.PacketsSent = g_packetsSent;
@@ -1596,12 +1638,16 @@ namespace NetworkManager
             }
         }
 
+        cached = stats; cachedAt = NowMs();
         return stats;
     }
 
     std::vector<PeerInfo> GetPeers()
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        static thread_local std::vector<PeerInfo> cached{};
+        static thread_local std::uint64_t cachedAt = 0;
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock()) return NowMs() - cachedAt <= 250 ? cached : std::vector<PeerInfo>{};
 
         std::vector<PeerInfo> peers;
         peers.reserve(g_peers.size());
@@ -1636,12 +1682,14 @@ namespace NetworkManager
             peers.push_back(std::move(info));
         }
 
+        cached = peers; cachedAt = NowMs();
         return peers;
     }
 
     bool GetVisualState(std::uint32_t playerId, std::uint32_t& revision, std::vector<std::uint8_t>& bytes, std::uint32_t skipRevision)
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock()) return false;
         const auto* peer = FindPeer(playerId);
         if (!peer || !peer->Connected || !peer->VisualRevision || peer->VisualRevision == skipRevision) return false;
         revision = peer->VisualRevision; bytes = peer->VisualBytes; return true;
@@ -1655,6 +1703,7 @@ namespace NetworkManager
 
     void RequestServerDiscovery(unsigned short port)
     {
+        const auto targets = BuildDiscoveryTargets(port);
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_winsockReady)
             return;
@@ -1670,7 +1719,6 @@ namespace NetworkManager
         request.Sequence = ++g_sequence;
         request.TimestampMs = now;
 
-        const auto targets = BuildDiscoveryTargets(port);
         for (const auto& target : targets)
             SendTo(target, request);
     }
@@ -1708,34 +1756,16 @@ namespace NetworkManager
 
     bool SendMotionEvent(const MotionEventPacket& event)
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_localPlayerId)
-            return false;
-
-        Packet packet{};
-        packet.Type = PacketType::MotionEvent;
-        packet.PlayerId = g_localPlayerId;
-        packet.Sequence = ++g_sequence;
-        packet.MotionHash = event.MotionHash;
-        packet.RequestedVariant = event.RequestedVariant;
-        packet.ParameterA = event.ParameterA;
-        packet.ParameterB = event.ParameterB;
-        packet.SenderTick = event.SenderTick;
-        packet.PacketSequence = event.PacketSequence ? event.PacketSequence : packet.Sequence;
-        packet.FlagA = event.FlagA;
-
-        if (g_mode.load(std::memory_order_acquire) == Mode::Host)
-        {
-            BroadcastHostPacket(packet);
-            return true;
-        }
-
-        return g_hasServer && SendTo(g_server, packet);
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock() || !g_localPlayerId || g_motionOutgoing.size() >= 128) return false;
+        g_motionOutgoing.push_back(event);
+        return true;
     }
 
     bool PopMotionEvent(MotionEventPacket& event)
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+        if (!lock.owns_lock()) return false;
         if (g_motionQueue.empty())
             return false;
 

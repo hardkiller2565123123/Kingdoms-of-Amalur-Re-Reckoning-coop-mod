@@ -1,3 +1,5 @@
+> Current candidate: source-only protocol v7 changes; no build or deployment performed. Build/test and installed-DLL records below are historical, not validation of this candidate.
+
 > Crash-fix update: F3DBD0 consumes one unused 32-bit stack argument (RET 4). Its old zero-argument call was wrong and is now corrected. Native stack regression and /RTC1 wrapper tests pass. See research/STACK_ABI_FIX.md; the installation/hash information below describes the earlier candidate.
 
 # Character synchronization mapping and build report
@@ -22,12 +24,12 @@ Component 7 is PartRendering, 8 is PartStats, 9 is PartInventory, 15 is PartPhys
 2. On the render frame callback, serialize C7 using `F11950`. Rendering uses `+9C` as a render-actor handle, resolved in manager `19FDF54`, table `+C4`, count `+C8`.
 3. Validate the recursive rendering archive, retain stable model/animation asset keys, canonicalize world transforms, and remove transient motion-controller queues. Limits: 64 KiB, 64 nodes, depth 16, 32 children per node, 128 overrides. The native writer has a fixed buffer with backpatch padding; overfull output is rejected.
 4. Append three texture keys and ten packed ARGB colors from C8. No process pointers or sender texture handles are sent.
-5. Transfer revisioned snapshots in 960-byte chunks over protocol 5. The host validates, caches, acknowledges and relays completed snapshots; unacknowledged revisions retry. New peers receive cached appearances.
+5. Transfer revisioned snapshots in 960-byte chunks over protocol 7. The host validates, caches, acknowledges and relays completed snapshots; unacknowledged revisions retry. New peers receive cached appearances.
 6. Spawn a destination-owned player-style proxy from the local verified template. Sender actor-definition/setup handles are diagnostic metadata only; they are not used as local engine identities.
 7. Preflight model, override, animation and texture identities. Registered model/texture resources are loaded through `A71E80(...,1)` and fallback placeholders rejected. Asset loading may cause a one-time frame stall; missing/unregistered assets fail visibly in diagnostics instead of claiming success.
 8. Apply C7 through `F1DA50`, then native post-load `F757C0` and transform update `F3DBD0`. The receiver creates its own render tree. Texture replacements retain/release receiver resource handles through manager vtable `+A4/+A8`, then reapply the Stats material listener. No gameplay Stats archive is imported.
 9. Replicate position and normalized quaternion separately. C6 position is `+24`, rotation `+34`; `F3BCF0` rebuilds derived transform data after rotation. Repeated movement does not change the normalized visual snapshot.
-10. Resolve each remote motion controller directly from its current C7 render handle plus actor offset `+44`. Replay native `D1D840` events against that controller; invalidate stale caches after visual replacement. Native rejection (`-1`) is counted as replay failure. Motion events remain best-effort UDP, not a durable animation timeline.
+10. Resolve the current remote motion controller from its C7 render handle plus actor offset `+44`. Capture/replay the shared `D1D5D0` clip enqueue path (five stack arguments, `RET 14h`), including selected variants, weights and up to eight tracks. Stable category-5 catalog, category-7 rig and category-8 clip keys replace sender handles. Receiver catalogs must belong to its model. Latest-state retries retain per-track animation serials; caches are invalidated after appearance replacement. See `research/ANIMATION_REQUEST_MAPPING.md`.
 
 Native access is moved out of the network worker into the frame callback. This serializes this mod's capture, proxy updates and apply operations; it is not proof that all engine rendering/streaming work is single-threaded.
 
@@ -53,9 +55,9 @@ Packed ARGB offsets, in wire order: `30`, `5C`, `3C`, `48`, `40`, `44`, `4C`, `5
 
 ## Session/server changes
 
-The host remains inside DINPUT8.dll, not a separate server executable. Protocol 5 is 1148 bytes per packet; both instances require the same DLL. Host-session and per-connection random nonces, endpoint checks, authoritative recurring rosters, sequence wrap handling, finite transform checks, stale movement timeout, bounded receive queues, and visual fragment validation are implemented. Session reset during native capture discards the old capture. These nonce checks are session isolation, not cryptographic authentication or encryption.
+The host remains inside DINPUT8.dll, not a separate server executable. Protocol 7 is 1148 bytes per packet; both instances require the same DLL. Host-session and per-connection random nonces, endpoint checks, authoritative recurring rosters, sequence wrap handling, finite transform checks, stale movement timeout, bounded receive queues, and visual fragment validation are implemented. Session reset during native capture discards the old capture. These nonce checks are session isolation, not cryptographic authentication or encryption.
 
-## Validation
+## Historical validation (before the current source candidate)
 
 - Release Win32 DLL compiles successfully (existing macro/export warnings remain).
 - `tests/run_tests.cmd` passes against production NetworkManager.cpp with game services stubbed: real UDP loopback hello/welcome, endpoint/session isolation, forged player IDs, roster removal/reordering, transform sequencing/wrap, non-finite positions, motion deduplication, visual chunk reordering/duplicates, malformed/truncated archives, motion stripping and material trailer validation.
@@ -125,7 +127,7 @@ Factory `FA5D80`, jump table `FA61B8`; table entries are confirmed against RTTI.
 | 41 | PartAttachToNodeAlias | 0x30 | 0x1756c6c |
 | 42 | PartMotion | 0x6c | 0x17561e4 |
 
-## Installed candidate
+## Historical installed candidate
 
 The Release Win32 DLL was installed beside koa.exe after confirming the game was stopped. The prior DLL is backed up as DINPUT8.before-character-sync-20261011-223616.dll.bak. DLL SHA-256: 8aa81e3a4ef3c63564a5f2cdd6f5d10ad694bae89a45133970102c695d2dca30. See build-manifest.json for the exact paths. No game EXE or save was modified, and no game instance was launched.
 

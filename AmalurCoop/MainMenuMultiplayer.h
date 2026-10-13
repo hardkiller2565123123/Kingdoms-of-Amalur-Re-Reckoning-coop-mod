@@ -2,9 +2,10 @@
 
 namespace MainMenuMultiplayer
 {
-    // Enables the game's own hidden Multiplayer frontend path. This module does
-    // not draw anything and does not consume input; all UI is owned by KOA.
+    // Patches the verified main_menu script in memory; KOA owns UI and input.
     bool Initialize();
     void Shutdown();
     bool IsReady();
+    // Worker thread only: buttons queue socket/DNS work here.
+    void PumpNetworkCommands();
 }

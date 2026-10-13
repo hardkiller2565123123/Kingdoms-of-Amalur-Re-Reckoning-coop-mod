@@ -1,11 +1,13 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
+#include <cstring>
 
 namespace AmalurNet
 {
     constexpr std::uint32_t Magic = 0x504F4341; // ACOP
-    constexpr std::uint16_t ProtocolVersion = 5;
+    constexpr std::uint16_t ProtocolVersion = 7;
     constexpr std::uint16_t DefaultPort = 7777;
     constexpr std::size_t MaxPlayers = 16;
 
@@ -72,6 +74,47 @@ namespace AmalurNet
 #pragma pack(pop)
 
     static_assert(sizeof(Packet) == 1148, "Unexpected Amalur network packet size");
+
+    // Native clip-queue requests: values and stable resource keys only.
+    // MotionEvent reuses VisualData; no packet growth or IP fragmentation.
+    struct AnimationRequest
+    {
+        std::uint32_t RigKey = 0;
+        std::uint32_t ResourceKeyA = 0;
+        std::uint32_t ResourceKeyB = 0;
+        std::uint32_t StartOffset = 0;
+        float Blend[6]{};
+        std::uint8_t BlendEnabled = 0;
+        std::uint8_t Reserved[3]{};
+        std::int32_t Variants[4]{ -1, -1, -1, -1 };
+        float Weights[4]{ 1, 0, 0, 0 };
+        std::uint8_t Track = 0;
+        std::uint8_t SelectedVariants = 0;
+        std::uint8_t QueueReserved[2]{};
+        std::uint32_t CatalogKey = 0;
+    };
+    static_assert(sizeof(AnimationRequest) == 84);
+
+    inline bool ValidAnimation(const Packet& packet)
+    {
+        AnimationRequest request{};
+        std::memcpy(&request, packet.VisualData, sizeof(request));
+        float speed = 0;
+        std::memcpy(&speed, &packet.ParameterA, sizeof(speed));
+        if (!packet.MotionHash || !request.RigKey || packet.FlagA > 1 ||
+            packet.RequestedVariant < -1 || request.BlendEnabled > 1 ||
+            request.Reserved[0] || request.Reserved[1] || request.Reserved[2] ||
+            request.Track >= 8 || request.SelectedVariants > 1 ||
+            (request.SelectedVariants && !request.CatalogKey) ||
+            request.QueueReserved[0] || request.QueueReserved[1] ||
+            !std::isfinite(speed) || speed < 0 || speed > 100) return false;
+        for (unsigned i = 0; i < 4; ++i)
+            if (request.Variants[i] < -1 || request.Variants[i] > 65535 ||
+                !std::isfinite(request.Weights[i]) || request.Weights[i] < 0 || request.Weights[i] > 1) return false;
+        for (const auto value : request.Blend)
+            if (!std::isfinite(value)) return false;
+        return true;
+    }
 
     // Serial arithmetic: zero is a valid sequence after wraparound.
     constexpr bool IsNewer(std::uint32_t value, std::uint32_t previous)

@@ -146,6 +146,7 @@
     <ClInclude Include="ImGuiOverlay.h" />
     <ClInclude Include="LobbyManager.h" />
     <ClInclude Include="MainMenuMultiplayer.h" />
+    <ClInclude Include="MainMenuScript.h" />
     <ClInclude Include="Logger.h" />
     <ClInclude Include="MemoryScanner.h" />
     <ClInclude Include="MotionReplication.h" />

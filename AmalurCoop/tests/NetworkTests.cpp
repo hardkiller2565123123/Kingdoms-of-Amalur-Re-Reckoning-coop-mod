@@ -133,8 +133,55 @@ int main()
     --p.ConnectionId; ++p.SessionId; HandleHostPacket(p, a); assert(g_peers[0].Position.X == 20);
     --p.SessionId; p.PlayerId = 3; HandleHostPacket(p, a); assert(g_peers[0].Position.X == 20);
     auto motion = ClientPacket(PacketType::MotionEvent, g_peers[0], 1);
-    motion.MotionHash = 123; HandleHostPacket(motion, a); HandleHostPacket(motion, a);
+    motion.MotionHash = 123; motion.RequestedVariant = -1; motion.PacketSequence = 77;
+    const float animationSpeed = 1.25f;
+    std::memcpy(&motion.ParameterA, &animationSpeed, 4);
+    AmalurNet::AnimationRequest animation{};
+    animation.RigKey = 0x123456; animation.ResourceKeyA = 0xABC;
+    animation.StartOffset = 150; animation.BlendEnabled = 1; animation.Blend[2] = 0.5f;
+    std::memcpy(motion.VisualData, &animation, sizeof(animation));
+    assert(AmalurNet::ValidAnimation(motion));
+    auto trackAnimation = animation;
+    trackAnimation.SelectedVariants = 1; trackAnimation.Track = 7;
+    trackAnimation.CatalogKey = 0x321; trackAnimation.Variants[0] = 2;
+    auto trackPacket = motion;
+    std::memcpy(trackPacket.VisualData, &trackAnimation, sizeof(trackAnimation));
+    assert(AmalurNet::ValidAnimation(trackPacket));
+    trackAnimation.Track = 8;
+    std::memcpy(trackPacket.VisualData, &trackAnimation, sizeof(trackAnimation));
+    assert(!AmalurNet::ValidAnimation(trackPacket));
+    trackAnimation.Track = 0; trackAnimation.CatalogKey = 0;
+    std::memcpy(trackPacket.VisualData, &trackAnimation, sizeof(trackAnimation));
+    assert(!AmalurNet::ValidAnimation(trackPacket));
+    trackAnimation.CatalogKey = 0x321; trackAnimation.Weights[0] = std::numeric_limits<float>::quiet_NaN();
+    std::memcpy(trackPacket.VisualData, &trackAnimation, sizeof(trackAnimation));
+    assert(!AmalurNet::ValidAnimation(trackPacket));
+    NetworkManager::MotionEventPacket outbound{};
+    outbound.MotionHash = motion.MotionHash; outbound.ParameterA = motion.ParameterA;
+    outbound.Animation = animation; outbound.PacketSequence = 90;
+    const auto sequenceBeforeEnqueue = g_sequence;
+    assert(NetworkManager::SendMotionEvent(outbound));
+    assert(g_sequence == sequenceBeforeEnqueue); // render-side enqueue performs no UDP send
+    assert(g_motionOutgoing.size() == 1 && g_motionOutgoing.front().PacketSequence == 90);
+
+    auto malformedMotion = motion;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    std::memcpy(&malformedMotion.ParameterA, &nan, 4);
+    HandleHostPacket(malformedMotion, a); assert(g_motionQueue.empty());
+    auto invalidAnimation = animation; invalidAnimation.BlendEnabled = 2;
+    std::memcpy(malformedMotion.VisualData, &invalidAnimation, sizeof(invalidAnimation));
+    malformedMotion.ParameterA = motion.ParameterA;
+    HandleHostPacket(malformedMotion, a); assert(g_motionQueue.empty());
+    HandleHostPacket(motion, a); HandleHostPacket(motion, a);
     assert(g_motionQueue.size() == 1);
+    assert(g_motionQueue.front().PacketSequence == 77);
+    assert(g_motionQueue.front().Animation.RigKey == animation.RigKey);
+    assert(g_motionQueue.front().Animation.ResourceKeyA == animation.ResourceKeyA);
+    assert(g_motionQueue.front().Animation.StartOffset == 150);
+    assert(g_motionQueue.front().Animation.Blend[2] == 0.5f);
+    ++motion.Sequence; HandleHostPacket(motion, a);
+    assert(g_motionQueue.size() == 2 && g_motionQueue.back().PacketSequence == 77);
+    // A heartbeat has a fresh transport sequence but must not restart the clip.
     auto visual = ClientPacket(PacketType::VisualChunk, g_peers[0], 2);
     visual.VisualRevision = 1; visual.VisualBytes = static_cast<std::uint32_t>(normalized.size());
     visual.VisualCount = 1; std::memcpy(visual.VisualData, normalized.data(), normalized.size());
@@ -143,6 +190,7 @@ int main()
     RemoveHostPeer(2); assert(g_motionQueue.empty());
 
     assert(NetworkManager::Join("127.0.0.1", 42001));
+    assert(g_motionOutgoing.empty()); // no queued animation leaks across sessions
     Packet welcome{}; welcome.Type = PacketType::Welcome; welcome.PlayerId = 2;
     welcome.SessionId = 55; welcome.ConnectionId = g_connectionId;
     HandleClientPacket(welcome, b); assert(g_localPlayerId == 0);

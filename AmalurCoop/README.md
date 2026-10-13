@@ -6,9 +6,9 @@ The current rendering/material mapping and validation limits are documented in [
 
 The project currently supports:
 
-- in-game F1 host/join controls with no separate server executable;
+- native main-menu Multiplayer -> Host / Join controls, plus the F1 diagnostic interface;
 - direct UDP sessions between game instances;
-- protocol-v5 player roster and snapshot replication so the host and joining players are announced immediately;
+- protocol-v7 player roster and snapshot replication so the host and joining players are announced immediately;
 - live player position and rotation replication;
 - revisioned peer rendering-tree and material snapshots with chunk recovery;
 - player-style remote proxy creation through the verified `FC6170 -> F86E20` path;
@@ -66,11 +66,13 @@ A manual local test proxy does not receive a peer appearance archive. For peer c
 
 ## Two-instance test
 
-1. Start both game instances and load both characters into the same area.
-2. Press **F1** in the first instance and select **Host session**.
-3. Press **F1** in the second instance and join `127.0.0.1` on the same UDP port.
-4. Protocol v5 immediately announces Player 1 (the host), sends the host's latest transform/player snapshot, then sends the existing peer roster to the joining client.
-5. The host runs inside the first game's `DINPUT8.dll`; `AmalurCoopServer.exe` is no longer used.
+1. Build the same updated Release Win32 source for both instances, then restart both games.
+2. In the first game's main menu, select **Multiplayer -> Host**.
+3. In the second, select **Multiplayer -> Join**. This uses the configured address/port; `auto` enables LAN discovery. For an explicit two-instance address, configure `127.0.0.1` using the INI/F1 settings.
+4. Return through the normal menu and load both saves into the same area. Hosting/joining does not automatically load a save.
+5. Protocol v7 announces the host and peer roster. The host runs inside DINPUT8.dll; no separate server executable is needed.
+
+This source candidate has not been built, deployed, or tested in live gameplay. See [research/NATIVE_MENU_PERFORMANCE.md](research/NATIVE_MENU_PERFORMANCE.md) for the source-only checks and diagnostic logs.
 
 For separate computers, join the host's LAN/VPN address. For internet testing, manually forward the selected UDP port and allow the game/DINPUT8 through the firewall. The default port is `7777`.
 
@@ -80,7 +82,7 @@ For separate computers, join the host's LAN/VPN address. For internet testing, m
 - Sender runtime handles are diagnostic metadata only. Peer appearance uses stable asset keys and receiver-owned native objects.
 - Mesh trees, texture keys and packed customization colors are transferred. Equipment gameplay effects and full animation state are not synchronized.
 - If the game does not expose a spare non-local `Player` context, AmalurCoop does not fabricate one; it still applies the verified actor-runtime `F7A270` stage.
-- Motion replay uses `D1D840`, but remote controller discovery is still experimental and intentionally uses no full actor-state scans.
+- Motion capture/replay uses the shared native clip queue `D1D5D0`, stable rig/catalog/clip keys, selected variants, blend weights, and up to eight tracks. Retries retain animation serials to avoid restarting a playing clip. Both instances must use protocol v7. Live animation behavior remains unverified.
 - Both players should remain in the same loaded area.
 - The code contains version-specific reverse-engineered addresses for the tested executable.
 - Spawned research actors are still game-managed; stopping proxy control does not yet destroy them safely.

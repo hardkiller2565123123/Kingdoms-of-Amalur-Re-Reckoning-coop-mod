@@ -39,16 +39,16 @@ w(rig+0x50,names);w(rig+0x54,1);w(names,0x123456)
 w(request,0x12340000);w(request+4,21);w(request+8,22);w(request+0xc,0x123456);w(request+0x34,0x12340001);w(request+0x38,150)
 u.mem_write(request+0x3c,struct.pack('<f',1.25));u.mem_write(request+0x40,struct.pack('<6fB3x',1,2,3,4,5,6,1));w(request+0x64,31);w(request+0x68,0);u.mem_write(request+0x6c,b'\x01')
 w(queue+4,slots);w(queue+8,20)
-def call():
+def call(state=0):
  w(stack,stop)
- for i,v in enumerate([request,0,-1,queue,0]):w(stack+4+i*4,v)
+ for i,v in enumerate([request,state,-1,queue,0]):w(stack+4+i*4,v)
  u.reg_write(UC_X86_REG_ESP,stack);u.reg_write(UC_X86_REG_ECX,rig);u.emu_start(0xD1D5D0,stop,count=5000)
  assert u.reg_read(UC_X86_REG_EIP)==stop and u.reg_read(UC_X86_REG_ESP)==stack+24
  node=r(slots+((r(queue+0x18)+19)%20)*4)
  assert node==allocations[-1]
  assert r(node)==0 and r(node+4)==0 and r(node+0x2c)==31
  assert r(node+0x30)==21 and r(node+0x34)==22
- assert r(node+0x38)==0 and r(node+0x3c)==0xffffffff and r(node+0x40)==150
+ assert r(node+0x38)==(state&0xffffffff) and r(node+0x3c)==0xffffffff and r(node+0x40)==150
  assert struct.unpack('<f',u.mem_read(node+0x28,4))[0]==1.25
  assert bytes(u.mem_read(node+0x44,28))==bytes(u.mem_read(request+0x40,28))
  assert r(node+0x60)==r(node+0x64)==0 and u.mem_read(node+0x68,1)==b'\x01'
@@ -60,3 +60,21 @@ print('PASS native D1D5D0: five-argument RET 14h, values, selected variants, wei
 w(request+0x14,-1);selection=0x400b000;selectvt=0x400c000;w(entries+0xc,selection);w(selection,selectvt);w(selectvt+0x10,selector)
 node=call();assert struct.unpack('<4i',u.mem_read(node+8,16))==(2,-1,-1,-1);assert refs=={21:2,22:2}
 print('PASS native random selector: captured resolved variant is 2, not -1')
+for state in (1, 37, -1):
+ call(state)
+print('PASS native queue preserves nonzero rig state and the -1 sentinel')
+
+# Execute D0F380's field-copy block with distinct descriptor values. This is
+# the active-instance mapping used for updates after D405C0 consumes a node.
+clip=0x400d000;desc=0x400e000
+for offset,value in ((0x18,77),(0x20,0x3fa00000),(0x1c,0x3f400000),
+                     (0x28,150),(0x14,2),(0x24,0x3e800000)):
+ w(desc+offset,value)
+w(stack+0x14,1234)
+u.reg_write(UC_X86_REG_ESP,stack);u.reg_write(UC_X86_REG_EDI,desc);u.reg_write(UC_X86_REG_ESI,clip)
+u.emu_start(0xD0F440,0xD0F46B,count=100)
+assert u.reg_read(UC_X86_REG_EIP)==0xD0F46B
+assert r(clip+0x5c)==77 and r(clip+0x64)==2
+assert r(clip+0x74)==0x3fa00000 and r(clip+0x78)==0x3f400000
+assert r(clip+0x48)==1234 and r(clip+0x50)==150
+print('PASS native active clip field mapping: group, variant, speed, weight and separate playback clock')

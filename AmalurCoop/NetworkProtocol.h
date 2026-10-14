@@ -7,7 +7,7 @@
 namespace AmalurNet
 {
     constexpr std::uint32_t Magic = 0x504F4341; // ACOP
-    constexpr std::uint16_t ProtocolVersion = 7;
+    constexpr std::uint16_t ProtocolVersion = 8;
     constexpr std::uint16_t DefaultPort = 7777;
     constexpr std::size_t MaxPlayers = 16;
 
@@ -102,6 +102,7 @@ namespace AmalurNet
         float speed = 0;
         std::memcpy(&speed, &packet.ParameterA, sizeof(speed));
         if (!packet.MotionHash || !request.RigKey || packet.FlagA > 1 ||
+            packet.ParameterB < -1 || packet.ParameterB > 65535 ||
             packet.RequestedVariant < -1 || request.BlendEnabled > 1 ||
             request.Reserved[0] || request.Reserved[1] || request.Reserved[2] ||
             request.Track >= 8 || request.SelectedVariants > 1 ||

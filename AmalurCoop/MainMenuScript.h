@@ -13,7 +13,7 @@ if menu and not menu.amalur_coop_installed then
     local host_id = 0x414302
     local join_id = 0x414303
     local status_id = 0x414304
-    local status = "Choose Host or Join, then load your save."
+    local status = "Choose Host or Join to select your save."
     local ticks = 0
     local function choose_save()
         -- Select the existing Load Game node through native navigation. This
@@ -48,7 +48,7 @@ if menu and not menu.amalur_coop_installed then
         return {
             id_string = multiplayer_id,
             title = "Multiplayer",
-            description = "Play together. Start a session, then load your save.",
+            description = "Choose a session and the character save you want to play.",
             extra_wins = {},
             children = {
                 { id_string = host_id, title = "Host", override = host,

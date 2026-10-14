@@ -14,7 +14,7 @@
 #include "Config.h"
 #include "GameState.h"
 #include "HookManager.h"
-#include "ImGuiOverlay.h"
+#include "GameFrameHook.h"
 #include "LobbyManager.h"
 #include "Logger.h"
 #include "MemoryScanner.h"
@@ -241,19 +241,19 @@ namespace
 
             Logger::Write(
                 Logger::Level::Info,
-                "Installing Direct3D 11 ImGui overlay hooks...");
+                "Installing Direct3D 11 game frame hook hooks...");
 
-            if (!ImGuiOverlay::Initialize())
+            if (!GameFrameHook::Initialize())
             {
                 Logger::Write(
                     Logger::Level::Error,
-                    "ImGui overlay hook failed to initialize");
+                    "game frame hook hook failed to initialize");
             }
             else
             {
                 Logger::Write(
                     Logger::Level::Success,
-                    "ImGui overlay initialized successfully");
+                    "game frame hook initialized successfully");
             }
         }
 
@@ -275,7 +275,7 @@ namespace
 
         Logger::Write(
             Logger::Level::Info,
-            "Press F1 to open or close the ImGui menu");
+            "Use the native Multiplayer menu to Host or Join");
 
         return true;
     }
@@ -315,9 +315,9 @@ namespace
 
         Logger::Write(
             Logger::Level::Info,
-            "Shutting down ImGui overlay...");
+            "Shutting down game frame hook...");
 
-        ImGuiOverlay::Shutdown();
+        GameFrameHook::Shutdown();
 
         ResearchLab::Shutdown();
 

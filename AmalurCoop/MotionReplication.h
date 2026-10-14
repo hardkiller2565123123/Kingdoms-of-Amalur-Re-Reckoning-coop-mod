@@ -42,7 +42,7 @@ namespace MotionReplication
     void Initialize();
     void Shutdown();
 
-    // Called from the render thread before ImGui rendering. Engine replay is
+    // Called from the render thread before Present. Engine replay is
     // kept off the UDP/update worker so motion requests enter through the same
     // thread as the verified render-thread actor operations.
     void PumpRemoteMotionOnGameThread();

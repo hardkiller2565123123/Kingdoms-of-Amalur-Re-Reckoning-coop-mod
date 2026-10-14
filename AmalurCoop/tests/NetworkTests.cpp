@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <limits>
 
-namespace Config { Settings Get() { Settings s; s.AutoConnect = false; return s; } }
+namespace Config { Settings Get() { Settings s; s.AutoConnect = true; return s; } } // legacy config must not auto-join
 namespace LobbyManager
 {
     int count = 1, max = 4;
@@ -89,6 +89,36 @@ int main()
         auto shortArchive = normalized; shortArchive.resize(n);
         assert(!Normalize(shortArchive, CharacterVisualRuntime::RenderingTag, false, checked));
     }
+    // Camera/culling/dirty flags must not hide peers or create new appearance
+    // revisions. Stable actor fields and attached-model visibility survive.
+    constexpr std::size_t rootFlags = 14 + 14 + 9 + 90 + 16;
+    auto hidden = archive;
+    hidden[9] |= 1;
+    const std::uint32_t sourceFlags = 0x000EA147u;
+    std::memcpy(hidden.data() + rootFlags, &sourceFlags, 4);
+    std::vector<std::uint8_t> visible;
+    assert(Normalize(hidden, CharacterVisualRuntime::RenderingTag, true, visible));
+    assert(visible == normalized);
+    // Animation catalog, owner identity and transient actor flags are not
+    // clothing changes. The transport archive still preserves those fields.
+    std::vector<std::uint8_t> key, changedKey;
+    assert(Normalize(normalized, CharacterVisualRuntime::RenderingTag, false, key, true));
+    auto animated = normalized;
+    const std::uint32_t runtimeValue = 0x12345678u;
+    std::memcpy(animated.data() + rootFlags - 4, &runtimeValue, 4);
+    std::memcpy(animated.data() + rootFlags + 4, &runtimeValue, 4);
+    assert(Normalize(animated, CharacterVisualRuntime::RenderingTag, false, changedKey, true));
+    assert(changedKey == key);
+    assert(Normalize(animated, CharacterVisualRuntime::RenderingTag, false, checked));
+    assert(checked != normalized);
+    animated[24] ^= 1; // root model key must invalidate appearance
+    assert(Normalize(animated, CharacterVisualRuntime::RenderingTag, false, changedKey, true));
+    assert(changedKey != key);
+    auto oldPeer = normalized;
+    oldPeer[9] |= 1;
+    std::memcpy(oldPeer.data() + rootFlags, &sourceFlags, 4);
+    assert(Normalize(oldPeer, CharacterVisualRuntime::RenderingTag, false, visible));
+    assert(visible == normalized);
     auto bad = normalized; bad[5] = 0xFF; bad[6] = 0xFF;
     assert(!Normalize(bad, CharacterVisualRuntime::RenderingTag, false, checked));
     assert(!Normalize(MakeArchive(false, 33), CharacterVisualRuntime::RenderingTag, false, checked));
@@ -118,6 +148,7 @@ int main()
     chunk.VisualBytes = 1500; chunk.VisualCount = 3; assert(!transfer.Accept(chunk));
 
     NetworkManager::Initialize();
+    assert(NetworkManager::GetMode() == NetworkManager::Mode::Offline);
     assert(NetworkManager::Host(0));
     const auto a = Endpoint(42001), b = Endpoint(42002), c = Endpoint(42003), d = Endpoint(42004);
     HandleHostPacket(Hello(101), a); HandleHostPacket(Hello(102), b); HandleHostPacket(Hello(103), c);
@@ -141,6 +172,11 @@ int main()
     animation.StartOffset = 150; animation.BlendEnabled = 1; animation.Blend[2] = 0.5f;
     std::memcpy(motion.VisualData, &animation, sizeof(animation));
     assert(AmalurNet::ValidAnimation(motion));
+    auto statePacket = motion;
+    statePacket.ParameterB = 37; assert(AmalurNet::ValidAnimation(statePacket));
+    statePacket.ParameterB = -1; assert(AmalurNet::ValidAnimation(statePacket));
+    statePacket.ParameterB = -2; assert(!AmalurNet::ValidAnimation(statePacket));
+    statePacket.ParameterB = 65536; assert(!AmalurNet::ValidAnimation(statePacket));
     auto trackAnimation = animation;
     trackAnimation.SelectedVariants = 1; trackAnimation.Track = 7;
     trackAnimation.CatalogKey = 0x321; trackAnimation.Variants[0] = 2;
@@ -189,7 +225,9 @@ int main()
     assert(g_peers[0].VisualRevision == 1 && g_peers[0].VisualBytes == normalized);
     RemoveHostPeer(2); assert(g_motionQueue.empty());
 
+    const auto previousJoin = NetworkManager::GetJoinGeneration();
     assert(NetworkManager::Join("127.0.0.1", 42001));
+    assert(NetworkManager::GetJoinGeneration() == previousJoin + 1);
     assert(g_motionOutgoing.empty()); // no queued animation leaks across sessions
     Packet welcome{}; welcome.Type = PacketType::Welcome; welcome.PlayerId = 2;
     welcome.SessionId = 55; welcome.ConnectionId = g_connectionId;

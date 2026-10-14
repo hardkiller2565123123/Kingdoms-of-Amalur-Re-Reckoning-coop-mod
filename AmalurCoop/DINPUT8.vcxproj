@@ -56,7 +56,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)third_party\imgui;$(ProjectDir)third_party\imgui\backends;$(ProjectDir)third_party\minhook\include;$(ProjectDir)third_party\minhook\src;$(ProjectDir)third_party\minhook\src\hde;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)third_party\minhook\include;$(ProjectDir)third_party\minhook\src;$(ProjectDir)third_party\minhook\src\hde;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -80,7 +80,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)third_party\imgui;$(ProjectDir)third_party\imgui\backends;$(ProjectDir)third_party\minhook\include;$(ProjectDir)third_party\minhook\src;$(ProjectDir)third_party\minhook\src\hde;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)third_party\minhook\include;$(ProjectDir)third_party\minhook\src;$(ProjectDir)third_party\minhook\src\hde;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -105,7 +105,7 @@
     <ClCompile Include="GameState.cpp" />
     <ClCompile Include="EngineRuntime.cpp" />
     <ClCompile Include="HookManager.cpp" />
-    <ClCompile Include="ImGuiOverlay.cpp" />
+    <ClCompile Include="GameFrameHook.cpp" />
     <ClCompile Include="LobbyManager.cpp" />
     <ClCompile Include="MainMenuMultiplayer.cpp" />
     <ClCompile Include="Logger.cpp" />
@@ -127,12 +127,6 @@
     <ClCompile Include="third_party\minhook\src\hook.c" />
     <ClCompile Include="third_party\minhook\src\trampoline.c" />
     <ClCompile Include="third_party\minhook\src\hde\hde32.c" />
-    <ClCompile Include="third_party\imgui\imgui.cpp" />
-    <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
-    <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
-    <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="third_party\imgui\backends\imgui_impl_dx11.cpp" />
-    <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AmalurCoop.h" />
@@ -143,7 +137,7 @@
     <ClInclude Include="framework.h" />
     <ClInclude Include="GameState.h" />
     <ClInclude Include="HookManager.h" />
-    <ClInclude Include="ImGuiOverlay.h" />
+    <ClInclude Include="GameFrameHook.h" />
     <ClInclude Include="LobbyManager.h" />
     <ClInclude Include="MainMenuMultiplayer.h" />
     <ClInclude Include="MainMenuScript.h" />
@@ -172,24 +166,16 @@
     <ClInclude Include="RuntimeInspector.h" />
     <ClInclude Include="ResearchLab.h" />
     <ClInclude Include="DInputProxy.h" />
-    <ClInclude Include="third_party\imgui\imconfig.h" />
-    <ClInclude Include="third_party\imgui\imgui.h" />
-    <ClInclude Include="third_party\imgui\imgui_internal.h" />
-    <ClInclude Include="third_party\imgui\imstb_rectpack.h" />
-    <ClInclude Include="third_party\imgui\imstb_textedit.h" />
-    <ClInclude Include="third_party\imgui\imstb_truetype.h" />
-    <ClInclude Include="third_party\imgui\backends\imgui_impl_dx11.h" />
-    <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="DINPUT8.def" />
     <None Include="setup_dependencies.ps1" />
     <None Include="LICENSE" />
   </ItemGroup>
-  <Target Name="EnsureThirdPartySources" BeforeTargets="PrepareForBuild" Condition="!Exists('$(ProjectDir)third_party\imgui\imgui.cpp') Or !Exists('$(ProjectDir)third_party\imgui\backends\imgui_impl_dx11.cpp') Or !Exists('$(ProjectDir)third_party\minhook\src\hook.c')">
+  <Target Name="EnsureThirdPartySources" BeforeTargets="PrepareForBuild" Condition="!Exists('$(ProjectDir)third_party\minhook\src\hook.c')">
     <Message Importance="high" Text="Third-party sources are missing. Running setup_dependencies.ps1..." />
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)setup_dependencies.ps1&quot;" />
-    <Error Condition="!Exists('$(ProjectDir)third_party\imgui\imgui.cpp') Or !Exists('$(ProjectDir)third_party\imgui\backends\imgui_impl_dx11.cpp') Or !Exists('$(ProjectDir)third_party\minhook\src\hook.c')" Text="Dependency setup failed. Run setup_dependencies.ps1 manually, then rebuild." />
+    <Error Condition="!Exists('$(ProjectDir)third_party\minhook\src\hook.c')" Text="Dependency setup failed. Run setup_dependencies.ps1 manually, then rebuild." />
   </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

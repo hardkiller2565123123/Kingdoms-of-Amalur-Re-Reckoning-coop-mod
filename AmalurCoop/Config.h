@@ -15,12 +15,8 @@ namespace Config
         float BossDamagePerExtraPlayer = 0.15f;
         float EnemyDamagePerExtraPlayer = 0.10f;
 
-        bool MenuStartsOpen = false;
-        bool CaptureInput = true;
-        bool ForceCursorVisible = true;
         bool AutoScanOnStartup = false;
         bool DebugConsoleOnStartup = false;
-        float MenuScale = 1.0f;
         int ForegroundFPS = 60;
         int BackgroundFPS = 30;
     };

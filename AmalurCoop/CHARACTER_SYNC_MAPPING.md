@@ -75,7 +75,7 @@ The host remains inside DINPUT8.dll, not a separate server executable. Protocol 
 
 ## Two-instance validation when testing the candidate
 
-Load both instances into the same area with distinguishable clothing. In F1, host on one and join `127.0.0.1:7777` on the other. Confirm distinct nonlocal actor/render handles and `Peer visuals ... applied=yes` in each process's diagnostics. Check position, facing, idle/walk/run, weapons/attacks, visible armor, skin/hair colors, then a clothing change. `applied=yes` reports completed native calls; visual correctness must still be observed. Each instance writes its own `AmalurCoop-<process ID>.log` beside the executable, so the two instances do not overwrite each other's logs. Avoid treating successful connection alone as character-sync success.
+Load both instances into the same area with distinguishable clothing. Use native Multiplayer -> Host on one and Join on the other, with `127.0.0.1:7777` configured for the client. Confirm distinct nonlocal actor/render handles and `Peer visuals ... applied=yes` in each process's diagnostics. Check position, facing, idle/walk/run, weapons/attacks, visible armor, skin/hair colors, then a clothing change. `applied=yes` reports completed native calls; visual correctness must still be observed. Each instance writes its own `AmalurCoop-<process ID>.log` beside the executable, so the two instances do not overwrite each other's logs. Avoid treating successful connection alone as character-sync success.
 
 ## Complete component factory
 

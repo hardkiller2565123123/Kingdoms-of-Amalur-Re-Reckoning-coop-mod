@@ -30,11 +30,13 @@
 
 namespace
 {
+    std::atomic<DWORD> g_poseThread{ 0 };
     constexpr uintptr_t kSetActorWorldPositionIda = 0x00F5DD50;
     constexpr std::uint64_t kRemoteTransformTimeoutMs = 3000;
     constexpr ULONGLONG kSpawnRetryMs = 5000;
     constexpr ULONGLONG kWorldStableDelayMs = 1200;
-    constexpr unsigned int kMaxAutomaticSpawnAttempts = 3;
+    constexpr unsigned int kFastSpawnAttempts = 3;
+    constexpr ULONGLONG kSlowSpawnRetryMs = 30000;
     constexpr std::uint32_t kManualProxyPlayerId = 0xFFFFFFFEu;
 
     using SetActorWorldPositionFn = int(__thiscall*)(void*, const void*);
@@ -69,9 +71,15 @@ namespace
         bool HasSnapshot = false;
 
         GameState::Vec3 Target{};
+        GameState::Vec3 RenderPosition{};
+        float RenderRotation[4]{ 0, 0, 0, 1 };
+        ULONGLONG LastSmoothTick = 0;
+        bool HasRenderRotation = false;
         std::uint64_t LastSeenMs = 0;
         ULONGLONG LastSpawnAttempt = 0;
         ULONGLONG LastAppearanceRefresh = 0;
+        ULONGLONG LastRuntimeCheck = 0;
+        ULONGLONG MissingRuntimeSince = 0;
         unsigned int SpawnAttempts = 0;
         unsigned int AppearanceRefreshPasses = 0;
 
@@ -154,6 +162,10 @@ namespace
 
     void ClearProxyRuntime(Proxy& proxy)
     {
+        proxy.LastSmoothTick = 0;
+        proxy.HasRenderRotation = false;
+        proxy.LastRuntimeCheck = 0;
+        proxy.MissingRuntimeSince = 0;
         proxy.ObjectHandle = 0;
         proxy.PersistentActorHandle = 0;
         proxy.DefinitionHandle = 0;
@@ -350,6 +362,11 @@ namespace
                 return false;
 
             auto& proxy = it->second;
+            if (!proxy.Connected || proxy.ObjectHandle || proxy.TransformComponent)
+            {
+                proxy.SpawnQueued = false;
+                return false;
+            }
             manual = proxy.Manual;
             if (!manual && !proxy.GamePlayerIndex)
                 proxy.GamePlayerIndex = AssignGamePlayerIndexLocked(playerId);
@@ -375,6 +392,10 @@ namespace
             if (it != g_proxies.end())
             {
                 it->second.SpawnQueued = false;
+                // A failed post-spawn check may still have allocated an actor.
+                // Retain its identity so recovery never allocates a duplicate.
+                if (spawned.ObjectHandle != PositionTracker::GetObjectHandle())
+                    it->second.ObjectHandle = spawned.ObjectHandle;
                 it->second.SpawnStatus = spawned.Status;
             }
             g_status = "Player-style proxy spawn failed: " + spawned.Status;
@@ -456,15 +477,18 @@ namespace
             auto it = g_proxies.find(playerId);
             if (it != g_proxies.end())
             {
-                ClearProxyRuntime(it->second);
-                it->second.SpawnStatus = "Transform became invalid; respawn queued on next retry";
+                // A transform call failing does not prove the actor was destroyed.
+                // Keep its handle and let the registry recovery pass rebind it.
+                it->second.TransformComponent = 0;
+                it->second.LastRuntimeCheck = 0;
+                it->second.SpawnStatus = "Transform unavailable; checking existing actor";
             }
         }
 
         MotionReplication::InvalidateRemoteController(playerId);
         Logger::WriteFormat(
             Logger::Level::Error,
-            "Remote player %u proxy became invalid; respawn scheduled",
+            "Remote player %u transform update failed; actor recovery scheduled",
             playerId);
         return false;
     }
@@ -518,6 +542,49 @@ namespace
 
 namespace RemotePlayerManager
 {
+    uintptr_t PrepareRenderMatrix(uintptr_t rendering)
+    {
+        if (GetCurrentThreadId() != g_poseThread.load(std::memory_order_relaxed) ||
+            !g_worldReady.load(std::memory_order_acquire)) return 0;
+        uintptr_t runtime = 0, transform = 0;
+        std::uint32_t handle = 0;
+        GameState::Vec3 target{};
+        float rotation[4]{};
+        bool hasRotation = false;
+        {
+            std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
+            if (!lock.owns_lock()) return 0;
+            for (const auto& pair : g_proxies)
+            {
+                const auto& proxy = pair.second;
+                if (!proxy.Connected || !proxy.LastSmoothTick || proxy.AppearanceComponent != rendering ||
+                    GetTickCount64() - proxy.LastSmoothTick > kRemoteTransformTimeoutMs) continue;
+                runtime = proxy.RuntimeObject; transform = proxy.TransformComponent;
+                handle = proxy.ObjectHandle; target = proxy.RenderPosition;
+                hasRotation = proxy.HasRenderRotation;
+                for (unsigned i = 0; i < 4; ++i) rotation[i] = proxy.RenderRotation[i];
+                break;
+            }
+        }
+        if (!handle || !transform || handle == PositionTracker::GetObjectHandle() ||
+            EngineRuntime::ResolveActorHandle(handle) != runtime ||
+            EngineRuntime::GetComponent(runtime, 6, true) != transform ||
+            EngineRuntime::GetComponent(runtime, 7, true) != rendering) return 0;
+        float current[8]{};
+        if (!EngineRuntime::ReadBytes(transform + 0x24, current, sizeof(current))) return 0;
+        float delta = 0, opposite = 0;
+        for (unsigned i = 0; i < 4; ++i)
+        {
+            delta += std::fabs(current[4+i] - rotation[i]);
+            opposite += std::fabs(current[4+i] + rotation[i]);
+        }
+        if (hasRotation && delta > 0.0001f && opposite > 0.0001f && !ApplyRotation(transform, rotation)) return 0;
+        if ((std::fabs(current[0]-target.X) > 0.01f || std::fabs(current[1]-target.Y) > 0.01f ||
+            std::fabs(current[2]-target.Z) > 0.01f) &&
+            !CallSetWorldPosition(transform, {target.X, target.Y, target.Z, 1.0f})) return 0;
+        return transform + 0x54; // same matrix F3DBD0 passes to F116B0
+    }
+
     void SetVisualSyncResult(std::uint32_t playerId, std::uint32_t revision, bool applied)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -581,6 +648,7 @@ namespace RemotePlayerManager
 
     void Update()
     {
+        g_poseThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
         const auto peers = NetworkManager::GetPeers();
         const ULONGLONG now = GetTickCount64();
         const bool worldReady = UpdateWorldGate();
@@ -615,6 +683,7 @@ namespace RemotePlayerManager
             bool HasRotation = false;
         };
         std::vector<Move> moves;
+        std::vector<std::uint32_t> recoveredPlayers;
 
         {
             std::lock_guard<std::mutex> lock(g_mutex);
@@ -641,31 +710,91 @@ namespace RemotePlayerManager
                 if (peer.HasTransform)
                     proxy.Target = { peer.Position.X, peer.Position.Y, peer.Position.Z };
 
+                // Validate cached identity at 1 Hz, including actors whose initial
+                // spawn returned before their components became available.
+                if (worldReady && proxy.ObjectHandle && now - proxy.LastRuntimeCheck >= 1000)
+                {
+                    proxy.LastRuntimeCheck = now;
+                    const auto runtime = EngineRuntime::ResolveActorHandle(proxy.ObjectHandle);
+                    if (!runtime)
+                    {
+                        if (!proxy.MissingRuntimeSince) proxy.MissingRuntimeSince = now;
+                        if (now - proxy.MissingRuntimeSince >= kSpawnRetryMs)
+                        {
+                            ClearProxyRuntime(proxy);
+                            proxy.SpawnAttempts = 0;
+                            proxy.LastSpawnAttempt = now;
+                            proxy.SpawnStatus = "Actor removed; replacement scheduled";
+                            recoveredPlayers.push_back(peer.PlayerId);
+                        }
+                    }
+                    else
+                    {
+                        proxy.MissingRuntimeSince = 0;
+                        const auto transform = EngineRuntime::IsActiveObject(runtime)
+                            ? EngineRuntime::GetComponent(runtime, 6, true) : 0;
+                        const auto rendering = EngineRuntime::GetComponent(runtime, 7, true);
+                        if (proxy.RuntimeObject != runtime || proxy.TransformComponent != transform ||
+                            proxy.AppearanceComponent != rendering)
+                        {
+                            proxy.RuntimeObject = runtime;
+                            proxy.TransformComponent = transform;
+                            proxy.ActorStateComponent = rendering;
+                            proxy.AppearanceComponent = rendering;
+                            proxy.EquipmentComponent = EngineRuntime::GetComponent(runtime, 9, true);
+                            proxy.RigSwapComponent = EngineRuntime::GetComponent(runtime, 42, false);
+                            proxy.ActorStateHandle = 0;
+                            if (rendering) EngineRuntime::Read(rendering + 0x9C, proxy.ActorStateHandle);
+                            proxy.ActorStateResolved = proxy.ActorStateHandle >= 2;
+                            proxy.SpawnStatus = transform ? "Existing actor recovered" : "Waiting for actor activation";
+                            recoveredPlayers.push_back(peer.PlayerId);
+                        }
+                    }
+                }
+
                 const bool freshTransform = peer.HasTransform &&
                     now - peer.LastTransformMs <= kRemoteTransformTimeoutMs;
-                if (worldReady && freshTransform && !proxy.TransformComponent && !proxy.SpawnQueued &&
-                    proxy.SpawnAttempts < kMaxAutomaticSpawnAttempts &&
-                    now - proxy.LastSpawnAttempt >= kSpawnRetryMs)
+                if (worldReady && freshTransform && !proxy.ObjectHandle && !proxy.TransformComponent && !proxy.SpawnQueued &&
+                    now - proxy.LastSpawnAttempt >= (proxy.SpawnAttempts < kFastSpawnAttempts ? kSpawnRetryMs : kSlowSpawnRetryMs))
                 {
                     proxy.LastSpawnAttempt = now;
                     ++proxy.SpawnAttempts;
                     proxy.SpawnQueued = true;
                     proxy.SpawnStatus = "Queued player-style proxy spawn (attempt " +
-                        std::to_string(proxy.SpawnAttempts) + "/" +
-                        std::to_string(kMaxAutomaticSpawnAttempts) + ")";
+                        std::to_string(proxy.SpawnAttempts) + ")";
                     g_spawnQueue.push_back(peer.PlayerId);
-                }
-                else if (!proxy.TransformComponent && !proxy.SpawnQueued &&
-                    proxy.SpawnAttempts >= kMaxAutomaticSpawnAttempts)
-                {
-                    proxy.SpawnStatus = "Automatic proxy spawning paused after repeated failures";
                 }
 
                 if (worldReady && freshTransform && proxy.TransformComponent)
                 {
-                    moves.push_back({ peer.PlayerId, proxy.TransformComponent, proxy.Target });
+                    if (!std::isfinite(proxy.Target.X) || !std::isfinite(proxy.Target.Y) || !std::isfinite(proxy.Target.Z)) continue;
+                    const float dx = proxy.Target.X - proxy.RenderPosition.X;
+                    const float dy = proxy.Target.Y - proxy.RenderPosition.Y;
+                    const float dz = proxy.Target.Z - proxy.RenderPosition.Z;
+                    const auto elapsed = now - proxy.LastSmoothTick;
+                    const bool snap = !proxy.LastSmoothTick || elapsed > 250 || dx*dx + dy*dy + dz*dz > 1500.0f*1500.0f;
+                    const float alpha = snap ? 1.0f : 1.0f - std::exp(-static_cast<float>(elapsed) / 60.0f);
+                    proxy.RenderPosition.X += dx * alpha;
+                    proxy.RenderPosition.Y += dy * alpha;
+                    proxy.RenderPosition.Z += dz * alpha;
+                    proxy.LastSmoothTick = now;
+                    proxy.HasRenderRotation = peer.HasRotation;
+                    if (peer.HasRotation)
+                    {
+                        float dot = 0, length = 0;
+                        for (unsigned i = 0; i < 4; ++i) dot += proxy.RenderRotation[i] * peer.Rotation[i];
+                        for (unsigned i = 0; i < 4; ++i)
+                        {
+                            const float target = dot < 0 ? -peer.Rotation[i] : peer.Rotation[i];
+                            proxy.RenderRotation[i] += (target - proxy.RenderRotation[i]) * alpha;
+                            length += proxy.RenderRotation[i] * proxy.RenderRotation[i];
+                        }
+                        if (length > 0.0001f)
+                            for (auto& v : proxy.RenderRotation) v /= std::sqrt(length);
+                    }
+                    moves.push_back({ peer.PlayerId, proxy.TransformComponent, proxy.RenderPosition });
                     moves.back().HasRotation = peer.HasRotation;
-                    for (unsigned i = 0; i < 4; ++i) moves.back().Rotation[i] = peer.Rotation[i];
+                    for (unsigned i = 0; i < 4; ++i) moves.back().Rotation[i] = proxy.RenderRotation[i];
                 }
             }
 
@@ -712,6 +841,13 @@ namespace RemotePlayerManager
             }
         }
 
+        for (const auto id : recoveredPlayers)
+        {
+            MotionReplication::InvalidateRemoteController(id);
+            PlayerLifecycleSync::NotifyProxyRemoved(id);
+            Logger::WriteFormat(Logger::Level::Info, "Remote player %u runtime recovery refreshed visual/motion state", id);
+        }
+
         for (const auto& move : moves)
         {
             const auto handle = GetProxyObjectHandle(move.PlayerId);
@@ -730,8 +866,9 @@ namespace RemotePlayerManager
             const bool turned = move.HasRotation && rotationDelta > 0.0001f && oppositeDelta > 0.0001f;
             if (turned) ApplyRotation(move.Transform, move.Rotation);
             if (moved) MoveProxy(move.PlayerId, move.Transform, move.Target);
-            if (moved || turned)
-                RefreshRenderTransform(EngineRuntime::GetComponent(runtime, 7));
+            // Visual loading/animation may dirty the render tree even when
+            // the peer stands still. Always publish the authoritative C6 pose.
+            RefreshRenderTransform(EngineRuntime::GetComponent(runtime, 7));
         }
     }
 

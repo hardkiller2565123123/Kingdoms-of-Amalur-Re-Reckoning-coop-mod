@@ -54,7 +54,7 @@ namespace CharacterVisualArchive
         in.At += count; return true;
     }
     inline bool Actor(Cursor& in, std::vector<std::uint8_t>& out, unsigned depth,
-        unsigned& nodes, bool stripMotion)
+        unsigned& nodes, bool stripMotion, bool appearanceKey = false)
     {
         if (depth > 16 || ++nodes > 64) return false;
         std::size_t refEnd = 0;
@@ -83,8 +83,25 @@ namespace CharacterVisualArchive
             if (!stripMotion && std::memcmp(in.Bytes.data() + in.At, out.data() + matrices, 90))
                 return false;
             in.At += 90;
-            // Five native scalar values and a stable animation asset key.
-            if (!Copy(in, out, 6 * 4)) return false;
+            // Actor+1D0 includes sender-local visibility and update flags.
+            // CCC300 zeros render opacity for mask E2004; D464xx maintains
+            // frame visibility/dirty bits. Never import the sender's culling
+            // result or rebuild the clothing tree when those bits change.
+            // Preserve explicit hidden (bit 4) on attached models (e.g. a
+            // sheathed weapon), but the remote player root must stay visible.
+            if (!Copy(in, out, 3 * 4)) return false;
+            std::uint32_t owner = 0;
+            if (!in.Read32(owner)) return false;
+            Write32(out, appearanceKey ? 0 : owner);
+            std::uint32_t flags = 0;
+            if (!in.Read32(flags)) return false;
+            constexpr std::uint32_t viewAndUpdateFlags = 0x000EA143u;
+            flags &= ~(viewAndUpdateFlags | (depth == 0 ? 4u : 0u));
+            Write32(out, appearanceKey ? (flags & 4u) : flags);
+            // Stable animation catalog key, not the current playback queue.
+            std::uint32_t catalog = 0;
+            if (!in.Read32(catalog)) return false;
+            Write32(out, appearanceKey ? 0 : catalog);
             if (stripMotion)
             {
                 std::size_t motionEnd = 0;
@@ -105,7 +122,7 @@ namespace CharacterVisualArchive
             if (!in.Read32(children) || children > 32) return false;
             Write32(out, children);
             for (std::uint32_t i = 0; i < children; ++i)
-                if (!Actor(in, out, depth + 1, nodes, stripMotion)) return false;
+                if (!Actor(in, out, depth + 1, nodes, stripMotion, appearanceKey)) return false;
             if (in.At != actorEnd) return false;
             End(out, actor);
         }
@@ -115,20 +132,23 @@ namespace CharacterVisualArchive
     // PartRendering's outer chunk tag comes from EF7210(component id 7).
     // Verify it against the supplied executable's tag rather than guessing.
     inline bool Normalize(const std::vector<std::uint8_t>& bytes, std::uint32_t renderingTag,
-        bool stripMotion, std::vector<std::uint8_t>& output)
+        bool stripMotion, std::vector<std::uint8_t>& output, bool appearanceKey = false)
     {
         output.clear();
         if (bytes.size() > MaxBytes || bytes.size() < 14) return false;
         Cursor in{ bytes }; std::size_t end = 0;
         if (!in.Chunk(renderingTag, 0, end) || (end != bytes.size() && end + MaterialBytes != bytes.size())) return false;
         const auto chunk = Begin(output, renderingTag, 0);
-        if (!Copy(in, output, 1)) return false;
+        if (in.At >= end) return false;
+        // F11950 serializes C7+F1; bit 0 instructs F1DA50/F757C0 to
+        // hide the entire render tree. This is sender-local player visibility.
+        output.push_back(static_cast<std::uint8_t>(in.Bytes[in.At++] & ~1u));
         std::uint32_t overrides = 0;
         if (!in.Read32(overrides) || overrides > 128) return false;
         Write32(output, overrides);
         if (!Copy(in, output, overrides * 8)) return false;
         unsigned nodes = 0;
-        if (!Actor(in, output, 0, nodes, stripMotion) || in.At != end) return false;
+        if (!Actor(in, output, 0, nodes, stripMotion, appearanceKey) || in.At != end) return false;
         End(output, chunk);
         if (end != bytes.size())
         {

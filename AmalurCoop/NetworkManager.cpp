@@ -6,6 +6,7 @@
 #include "Logger.h"
 #include "NetworkProtocol.h"
 #include "CharacterVisualRuntime.h"
+#include "CharacterVisualArchive.h"
 #include "VisualTransfer.h"
 #include <map>
 #include "PositionTracker.h"
@@ -116,6 +117,7 @@ namespace
     std::set<std::uint32_t> g_rosterIds;
     std::uint64_t g_lastRoster = 0;
     std::vector<std::uint8_t> g_localVisual;
+    std::vector<std::uint8_t> g_localAppearanceKey;
     std::uint32_t g_localVisualRevision = 0;
     std::uint64_t g_lastVisualCapture = 0;
     float g_localRotation[4]{ 0, 0, 0, 1 };
@@ -354,6 +356,7 @@ namespace
         g_rosterSequence = 0;
         g_lastRoster = 0;
         g_localVisual.clear();
+        g_localAppearanceKey.clear();
         g_localVisualRevision = 0;
         g_lastVisualCapture = 0;
         g_hasLocalRotation = false;
@@ -1271,14 +1274,18 @@ namespace NetworkManager
                 std::any_of(g_peers.begin(), g_peers.end(), [](const PeerState& peer) { return peer.Connected; });
             if (capture) g_lastVisualCapture = now;
         }
-        const bool captured = capture && CharacterVisualRuntime::Capture(visual);
+        std::vector<std::uint8_t> appearanceKey;
+        const bool captured = capture && CharacterVisualRuntime::Capture(visual) &&
+            CharacterVisualArchive::Normalize(visual, CharacterVisualRuntime::RenderingTag,
+                false, appearanceKey, true);
         std::unique_lock<std::mutex> lock(g_mutex, std::try_to_lock);
         if (!lock.owns_lock()) return;
         if (captureSession != g_sessionId || captureConnection != g_connectionId) return;
         g_hasLocalRotation = hasRotation;
         if (hasRotation) std::memcpy(g_localRotation, rotation, sizeof(rotation));
-        if (captured && visual != g_localVisual)
+        if (captured && appearanceKey != g_localAppearanceKey)
         {
+            g_localAppearanceKey = std::move(appearanceKey);
             g_localVisual = std::move(visual);
             if (!++g_localVisualRevision) ++g_localVisualRevision;
         }

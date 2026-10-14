@@ -16,12 +16,6 @@
     <Filter Include="Third Party">
       <UniqueIdentifier>{D86B0417-7D34-4652-87FD-2232DE1297B7}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Third Party\Dear ImGui">
-      <UniqueIdentifier>{31771FC0-D71B-42ED-A045-71485087D522}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Third Party\Dear ImGui\Backends">
-      <UniqueIdentifier>{EAFEB91B-F00F-4E02-A813-4F5D92DDF892}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Third Party\MinHook">
       <UniqueIdentifier>{68C14112-6E15-4FE9-B7A5-969A72074961}</UniqueIdentifier>
     </Filter>
@@ -90,7 +84,7 @@
     <ClCompile Include="CommandConsole.cpp">
       <Filter>Interface</Filter>
     </ClCompile>
-    <ClCompile Include="ImGuiOverlay.cpp">
+    <ClCompile Include="GameFrameHook.cpp">
       <Filter>Interface</Filter>
     </ClCompile>
     <ClCompile Include="MainMenuMultiplayer.cpp">
@@ -110,24 +104,6 @@
     </ClCompile>
     <ClCompile Include="third_party\minhook\src\hde\hde32.c">
       <Filter>Third Party\MinHook\HDE</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\imgui\imgui.cpp">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\imgui\backends\imgui_impl_dx11.cpp">
-      <Filter>Third Party\Dear ImGui\Backends</Filter>
-    </ClCompile>
-    <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp">
-      <Filter>Third Party\Dear ImGui\Backends</Filter>
     </ClCompile>
     <ClCompile Include="ResearchLab.cpp">
       <Filter>Features</Filter>
@@ -197,7 +173,7 @@
     <ClInclude Include="CommandConsole.h">
       <Filter>Interface</Filter>
     </ClInclude>
-    <ClInclude Include="ImGuiOverlay.h">
+    <ClInclude Include="GameFrameHook.h">
       <Filter>Interface</Filter>
     </ClInclude>
     <ClInclude Include="MainMenuMultiplayer.h">
@@ -223,30 +199,6 @@
     </ClInclude>
     <ClInclude Include="third_party\minhook\src\hde\table32.h">
       <Filter>Third Party\MinHook\HDE</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imconfig.h">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imgui.h">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imgui_internal.h">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imstb_rectpack.h">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imstb_textedit.h">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\imstb_truetype.h">
-      <Filter>Third Party\Dear ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\backends\imgui_impl_dx11.h">
-      <Filter>Third Party\Dear ImGui\Backends</Filter>
-    </ClInclude>
-    <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h">
-      <Filter>Third Party\Dear ImGui\Backends</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

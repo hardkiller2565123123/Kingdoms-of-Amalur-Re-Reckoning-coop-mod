@@ -117,7 +117,12 @@ namespace
     std::size_t g_outgoingCount = 0;
     std::array<NetworkManager::MotionEventPacket, 8> g_latestMotion{}; // protected by outgoing mutex
     ULONGLONG g_nextStateResend = 0;
-    struct AppliedMotion { uintptr_t Controller = 0; std::uint32_t Sequence = 0; };
+    struct AppliedMotion
+    {
+        uintptr_t Controller = 0;
+        std::uint32_t Sequence = 0;
+        NetworkManager::MotionEventPacket Packet{};
+    };
     std::map<std::pair<std::uint32_t, std::uint8_t>, AppliedMotion> g_appliedMotion; // render thread only
     std::atomic<std::uint64_t> g_hookCalls{ 0 }, g_localRequests{ 0 };
 
@@ -411,7 +416,7 @@ namespace
         const auto& previous = g_latestMotion[packet.Animation.Track];
         if (previous.MotionHash == packet.MotionHash &&
             previous.RequestedVariant == packet.RequestedVariant &&
-            previous.ParameterA == packet.ParameterA && previous.FlagA == packet.FlagA &&
+            previous.ParameterA == packet.ParameterA && previous.ParameterB == packet.ParameterB && previous.FlagA == packet.FlagA &&
             std::memcmp(&previous.Animation, &packet.Animation, sizeof(packet.Animation)) == 0)
             return true;
 
@@ -528,12 +533,16 @@ namespace
             if (!entries || capacity <= 0 || capacity > 4096 || write < 0 || write >= capacity || queued <= 0) return false;
             const auto node = *reinterpret_cast<uintptr_t*>(entries + ((write + capacity - 1) % capacity) * 4);
             if (!node) return false;
+            // This is a rig state index, not a process handle. The evaluator
+            // uses it for loop/transition semantics; forcing every clip to
+            // state zero made locomotion use the wrong playback policy.
+            packet->ParameterB = *reinterpret_cast<const int*>(node + 0x38);
             std::memcpy(packet->Animation.Variants, reinterpret_cast<void*>(node + 8), 16);
             std::memcpy(packet->Animation.Weights, reinterpret_cast<void*>(node + 0x18), 16);
             packet->Animation.SelectedVariants = 1;
             packet->RequestedVariant = packet->Animation.Variants[0];
             AmalurNet::Packet check{};
-            check.MotionHash = packet->MotionHash; check.ParameterA = packet->ParameterA;
+            check.MotionHash = packet->MotionHash; check.ParameterA = packet->ParameterA; check.ParameterB = packet->ParameterB;
             check.FlagA = packet->FlagA; check.RequestedVariant = packet->RequestedVariant;
             std::memcpy(check.VisualData, &packet->Animation, sizeof(packet->Animation));
             return AmalurNet::ValidAnimation(check);
@@ -661,7 +670,8 @@ namespace
         return (flags[handle] & 0x14) == 4 ? handle : -1;
     }
 
-    bool GuardedReplay(uintptr_t controller, const NetworkManager::MotionEventPacket& packet)
+    bool GuardedReplay(uintptr_t controller, const NetworkManager::MotionEventPacket& packet,
+        const NetworkManager::MotionEventPacket* previous)
     {
         if (!oMotionRequest || !controller || !packet.Animation.RigKey || packet.Animation.Track >= 8) return false;
         __try
@@ -685,6 +695,11 @@ namespace
             void* manager = *reinterpret_cast<void**>(RuntimeAddress(0x019F4D4C));
             void* rigAsset = reinterpret_cast<Lookup>(RuntimeAddress(0x00A71E80))(manager, rig, 1);
             if (!rigAsset) return false;
+            const auto rigAddress = reinterpret_cast<uintptr_t>(rigAsset);
+            const int stateCount = *reinterpret_cast<const int*>(rigAddress + 4);
+            if (packet.ParameterB < -1 || (packet.ParameterB >= 0 &&
+                (stateCount <= packet.ParameterB || stateCount > 65536 ||
+                 !*reinterpret_cast<uintptr_t*>(rigAddress + 8)))) return false;
             request.Hash = packet.MotionHash;
             request.StartOffset = packet.Animation.StartOffset;
             request.Flag = packet.FlagA;
@@ -736,6 +751,36 @@ namespace
                 using ResolveClip = bool(__thiscall*)(void*, NativeRequest*);
                 if (!reinterpret_cast<ResolveClip>(RuntimeAddress(0x00CE71D0))(rigAsset, &request)) return false;
             }
+            // A queued clip alone is insufficient: D464D6 skips D44790 when
+            // the owner's catalog activation counts are all zero. Visual-only
+            // loading does not restore these transient counts. Use the native
+            // activation function so its resource-cache bookkeeping is balanced.
+            {
+                using LookupModel = uintptr_t(__thiscall*)(void*, int);
+                auto* modelManager = *reinterpret_cast<void**>(RuntimeAddress(0x019FDF54));
+                const int modelHandle = *reinterpret_cast<int*>(request.Owner + 0x198);
+                const auto model = reinterpret_cast<LookupModel>(RuntimeAddress(0x00A6DF80))(modelManager, modelHandle);
+                if (!model) return false;
+                const int count = *reinterpret_cast<int*>(model + 0x190);
+                const auto catalogs = *reinterpret_cast<const int**>(model + 0x18C);
+                const int activeCount = *reinterpret_cast<int*>(request.Owner + 0x1A8);
+                const auto active = *reinterpret_cast<const std::uint8_t**>(request.Owner + 0x1A4);
+                if (count <= 0 || count > 4096 || activeCount < count || !catalogs || !active) return false;
+                int index = -1;
+                for (int i = 0; i < count; ++i)
+                    if (catalogs[i] == request.Catalog) { index = i; break; }
+                if (index < 0) return false;
+                if (!active[index])
+                {
+                    using ActivateCatalog = void(__thiscall*)(void*, const int*, bool);
+                    reinterpret_cast<ActivateCatalog>(RuntimeAddress(0x00CCB840))(
+                        reinterpret_cast<void*>(request.Owner), &request.Catalog, false);
+                    if (!active[index]) return false;
+                    Logger::WriteFormat(Logger::Level::Debug,
+                        "Remote animation catalog activated actor=%u catalog=0x%08X slot=%d",
+                        packet.ActorNetId, packet.Animation.CatalogKey, index);
+                }
+            }
             int count = *reinterpret_cast<int*>(controller + 0x64);
             if (count < 0 || count > 64) return false;
             while (count <= packet.Animation.Track)
@@ -748,7 +793,66 @@ namespace
             }
             const auto tracks = *reinterpret_cast<uintptr_t*>(controller + 0x60);
             if (!tracks) return false;
+            // Mirror D3ECC5/D3ECD1 and D1D856/D1D862. D32260 sets
+            // these controller summary flags at initialization; bypassing the
+            // normal request wrapper must also perform its flag transition.
+            *reinterpret_cast<std::uint16_t*>(controller + 0xB8) &= static_cast<std::uint16_t>(~0x18u);
             const auto queue = tracks + packet.Animation.Track * 0x5C + 4;
+            // D405C0 consumes the queue into controller+14's active clip list.
+            // Updating only queued nodes restarts already-playing blend clips.
+            // D0F380 maps catalog/index/variant to +34/+60/+64, group to +5C,
+            // speed to +74 and variant weight to +78. Only reuse the complete
+            // current group after an unchanged request identity; never seek it.
+            if (previous && previous->MotionHash == packet.MotionHash &&
+                previous->ParameterB == packet.ParameterB && previous->FlagA == packet.FlagA &&
+                previous->Animation.RigKey == packet.Animation.RigKey &&
+                previous->Animation.ResourceKeyA == packet.Animation.ResourceKeyA &&
+                previous->Animation.ResourceKeyB == packet.Animation.ResourceKeyB &&
+                previous->Animation.CatalogKey == packet.Animation.CatalogKey &&
+                previous->Animation.StartOffset == packet.Animation.StartOffset &&
+                previous->Animation.SelectedVariants && packet.Animation.SelectedVariants &&
+                previous->Animation.BlendEnabled == packet.Animation.BlendEnabled &&
+                !std::memcmp(previous->Animation.Blend, packet.Animation.Blend, sizeof(packet.Animation.Blend)) &&
+                !std::memcmp(previous->Animation.Variants, packet.Animation.Variants, sizeof(packet.Animation.Variants)) &&
+                *reinterpret_cast<int*>(queue + 0x1C) == 0)
+            {
+                const auto track = queue - 4;
+                const int groups = *reinterpret_cast<int*>(track + 0x3C);
+                const auto groupIds = *reinterpret_cast<const int**>(track + 0x38);
+                const int activeCount = *reinterpret_cast<int*>(controller + 0x2C);
+                const auto activeClips = *reinterpret_cast<const uintptr_t**>(controller + 0x28);
+                if (groups > 0 && groups <= 4096 && groupIds && activeCount > 0 && activeCount <= 4096 && activeClips)
+                {
+                    const int group = groupIds[groups - 1];
+                    uintptr_t matches[4]{};
+                    bool complete = group >= 0;
+                    unsigned expected = 0, found = 0;
+                    for (int variant : request.Variants) if (variant >= 0) ++expected;
+                    for (int i = 0; complete && i < activeCount; ++i)
+                    {
+                        const auto clip = activeClips[i];
+                        if (!clip || *reinterpret_cast<int*>(clip + 0x5C) != group) continue;
+                        int slot = -1;
+                        for (int v = 0; v < 4; ++v)
+                            if (request.Variants[v] >= 0 && request.Variants[v] == *reinterpret_cast<int*>(clip + 0x64)) { slot = v; break; }
+                        if (slot < 0 || matches[slot] || (*reinterpret_cast<unsigned short*>(clip + 0x80) & 2) ||
+                            *reinterpret_cast<int*>(clip + 0x34) != request.Catalog ||
+                            *reinterpret_cast<int*>(clip + 0x60) != request.CatalogIndex ||
+                            *reinterpret_cast<int*>(clip + 0x38) != request.ResourceA ||
+                            *reinterpret_cast<int*>(clip + 0x3C) != request.ResourceB) { complete = false; break; }
+                        matches[slot] = clip; ++found;
+                    }
+                    if (complete && expected && found == expected)
+                    {
+                        for (int v = 0; v < 4; ++v) if (matches[v])
+                        {
+                            *reinterpret_cast<float*>(matches[v] + 0x74) = request.Speed;
+                            *reinterpret_cast<float*>(matches[v] + 0x78) = request.Weights[v];
+                        }
+                        return true;
+                    }
+                }
+            }
             // Blend weights/speed can change each frame without changing the
             // clip. Update the sole current queue node in place so its playback
             // clock survives. Only reuse an exact catalog/variant/resource match.
@@ -759,7 +863,8 @@ namespace
             if (queued == 1 && slots && capacity > 0 && capacity <= 4096 && read >= 0 && read < capacity)
             {
                 const auto node = *reinterpret_cast<uintptr_t*>(slots + read * 4);
-                if (node && *reinterpret_cast<int*>(node + 4) == request.CatalogIndex &&
+                if (node && *reinterpret_cast<int*>(node + 0x38) == packet.ParameterB &&
+                    *reinterpret_cast<int*>(node + 4) == request.CatalogIndex &&
                     *reinterpret_cast<int*>(node + 0x2C) == request.Catalog &&
                     *reinterpret_cast<int*>(node + 0x30) == request.ResourceA &&
                     *reinterpret_cast<int*>(node + 0x34) == request.ResourceB &&
@@ -777,7 +882,7 @@ namespace
             reinterpret_cast<Clear>(RuntimeAddress(0x00CE6910))(reinterpret_cast<void*>(queue));
             // D1D5D0 retains its own optional resource references. Our stack
             // descriptor borrows handles and must not retain/release them again.
-            oMotionRequest(rigAsset, &request, 0, -1, reinterpret_cast<void*>(queue), nullptr);
+            oMotionRequest(rigAsset, &request, packet.ParameterB, -1, reinterpret_cast<void*>(queue), nullptr);
             *reinterpret_cast<std::uint8_t*>(queue + 0x20) |= 1;
             return true;
         }
@@ -856,6 +961,15 @@ namespace MotionReplication
         {
             SetStatus("Animation ABI signature mismatch");
             Logger::Write(Logger::Level::Error, "D1D5D0 signature mismatch; animation hook not installed");
+            return;
+        }
+        const std::uint8_t catalogExpected[]{ 0x83, 0xEC, 0x08, 0x53, 0x55, 0x8B, 0xE9 };
+        std::uint8_t catalogActual[sizeof(catalogExpected)]{};
+        if (!EngineRuntime::ReadBytes(RuntimeAddress(0x00CCB840), catalogActual, sizeof(catalogActual)) ||
+            std::memcmp(catalogActual, catalogExpected, sizeof(catalogActual)))
+        {
+            SetStatus("Catalog activation ABI mismatch");
+            Logger::Write(Logger::Level::Error, "CCB840 signature mismatch; animation hook not installed");
             return;
         }
         g_hookTarget = reinterpret_cast<void*>(target);
@@ -975,12 +1089,14 @@ namespace MotionReplication
                  !AmalurNet::IsNewer(packet.PacketSequence, applied->second.Sequence))) continue;
 
             g_applyingRemoteMotion = true;
-            const bool replayed = GuardedReplay(controller, packet);
+            const auto* previous = applied != g_appliedMotion.end() && applied->second.Controller == controller
+                ? &applied->second.Packet : nullptr;
+            const bool replayed = GuardedReplay(controller, packet, previous);
             g_applyingRemoteMotion = false;
 
             if (replayed)
             {
-                g_appliedMotion[{ packet.ActorNetId, packet.Animation.Track }] = { controller, packet.PacketSequence };
+                g_appliedMotion[{ packet.ActorNetId, packet.Animation.Track }] = { controller, packet.PacketSequence, packet };
                 ++g_replayCount;
                 SetStatus("Remote motion replayed");
             }

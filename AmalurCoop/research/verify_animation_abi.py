@@ -54,7 +54,10 @@ print('PASS D3EC40 failure path: RET 0x34, two owning references consumed')
 # Native success path: game allocators/clip lookup mocked, argument marshalling,
 # native request construction and handle destructor/epilogue execute unmodified.
 w(controller+0xa4,42);w(controller+0x64,0);refs.update({21:1,22:1})
+w(controller+0xb8,0xFFFF)
 assert call(0xD3EC40,args)==1 and r(output)==123
+assert r(controller+0xb8)==0xFFE7, 'native request must clear controller bits 0x18'
+print('PASS native controller activation: clears bits 0x18, preserves other flags')
 assert refs[21]==refs[22]==0
 request=observed[-1]
 assert struct.unpack_from('<I',request,0xc)[0]==0xabcdef

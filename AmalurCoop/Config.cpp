@@ -43,7 +43,6 @@ namespace
         value.EnemyHealthPerExtraPlayer = std::clamp(value.EnemyHealthPerExtraPlayer, 0.0f, 5.0f);
         value.BossDamagePerExtraPlayer = std::clamp(value.BossDamagePerExtraPlayer, 0.0f, 5.0f);
         value.EnemyDamagePerExtraPlayer = std::clamp(value.EnemyDamagePerExtraPlayer, 0.0f, 5.0f);
-        value.MenuScale = std::clamp(value.MenuScale, 0.75f, 1.75f);
         value.ForegroundFPS = std::clamp(value.ForegroundFPS, 0, 240);
         value.BackgroundFPS = std::clamp(value.BackgroundFPS, 0, 240);
         return value;
@@ -82,10 +81,6 @@ namespace Config
         loaded.BossDamagePerExtraPlayer = ReadFloat("Scaling", "BossDamagePerExtraPlayer", loaded.BossDamagePerExtraPlayer);
         loaded.EnemyDamagePerExtraPlayer = ReadFloat("Scaling", "EnemyDamagePerExtraPlayer", loaded.EnemyDamagePerExtraPlayer);
 
-        loaded.MenuStartsOpen = ReadInt("Interface", "MenuStartsOpen", ToIniBool(loaded.MenuStartsOpen)) != 0;
-        loaded.CaptureInput = ReadInt("Interface", "CaptureInput", ToIniBool(loaded.CaptureInput)) != 0;
-        loaded.ForceCursorVisible = ReadInt("Interface", "ForceCursorVisible", ToIniBool(loaded.ForceCursorVisible)) != 0;
-        loaded.MenuScale = ReadFloat("Interface", "MenuScale", loaded.MenuScale);
         loaded.ForegroundFPS = ReadInt("Performance", "ForegroundFPS", loaded.ForegroundFPS);
         loaded.BackgroundFPS = ReadInt("Performance", "BackgroundFPS", loaded.BackgroundFPS);
 
@@ -120,10 +115,6 @@ namespace Config
         WriteFloat("Scaling", "BossDamagePerExtraPlayer", value.BossDamagePerExtraPlayer);
         WriteFloat("Scaling", "EnemyDamagePerExtraPlayer", value.EnemyDamagePerExtraPlayer);
 
-        WriteInt("Interface", "MenuStartsOpen", ToIniBool(value.MenuStartsOpen));
-        WriteInt("Interface", "CaptureInput", ToIniBool(value.CaptureInput));
-        WriteInt("Interface", "ForceCursorVisible", ToIniBool(value.ForceCursorVisible));
-        WriteFloat("Interface", "MenuScale", value.MenuScale);
         WriteInt("Performance", "ForegroundFPS", value.ForegroundFPS);
         WriteInt("Performance", "BackgroundFPS", value.BackgroundFPS);
 

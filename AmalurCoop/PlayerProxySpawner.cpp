@@ -354,6 +354,8 @@ namespace PlayerProxySpawner
                 reinterpret_cast<const void*>(result.DescriptorA),
                 reinterpret_cast<const void*>(result.DescriptorB)))
         {
+            if (static_cast<std::uint32_t>(outActorHandle) != localObjectHandle)
+                result.ObjectHandle = static_cast<std::uint32_t>(outActorHandle);
             result.Status = "Player-style FC6170 spawn failed";
             return result;
         }

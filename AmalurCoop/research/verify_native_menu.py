@@ -7,7 +7,7 @@ r=Path(__file__).resolve().parents[1]
 source=(r/'MainMenuScript.h').read_text().split('R"AmalurLua(',1)[1].split(')AmalurLua"',1)[0]
 lua=LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
-commands = {}; updates = 0; changed = {}; current_status = "Offline"
+commands = {}; updates = 0; changed = {}; current_status = "Offline"; save_opens = 0
 function print(value)
   commands[#commands+1] = value
   if value == "__AmalurCoop:host" then return "Starting host..." end
@@ -15,9 +15,16 @@ function print(value)
   if value == "__AmalurCoop:status" then return current_status end
 end
 main_menu = {
- get_button_tree_info = function(arg) return { title=arg, children={{id_string=657596, title="Continue"}} } end,
+ get_button_tree_info = function(arg) return { title=arg, children={{id_string=3004181, title="Continue"}, {module="options_win"}, {title="Exit"}} } end,
  on_update_event = function(...) updates=updates+1 end,
- m_button_tree = { change_button_title=function(self,id,text) changed[id]=text end }
+ m_button_tree = {
+  change_button_title=function(self,id,text) changed[id]=text end,
+  find_node=function(self,id) assert(id==735424); return {id_string=id} end,
+  m_lookup_table={[735424]={index=2}},
+  launch_into=function(self,id) assert(id==657596); self.at_root=true end,
+  set_highlight=function(self,index) assert(self.at_root and index==2); self.load_selected=true end,
+  go_down_a_level=function(self) assert(self.load_selected); save_opens=save_opens+1; self.load_selected=false end
+ }
 }
 ''')
 lua.globals().fixture_source = source
@@ -25,20 +32,22 @@ lua.execute('setmetatable(main_menu, {__index=_G}); setfenv(assert(loadstring(fi
 lua.execute('''
 assert(commands[1] == "__AmalurCoop:ready")
 local root = main_menu.get_button_tree_info("Original")
-assert(root.title == "Original" and #root.children == 2)
+assert(root.title == "Original" and #root.children == 4)
 assert(root.children[1].title == "Continue")
 assert(root.children[2].module == "amalur_coop_menu")
+assert(root.children[3].module == "options_win" and root.children[4].title == "Exit")
 local mp = _G[root.children[2].module].get_button_tree_info()
 assert(mp.title == "Multiplayer" and mp.children[1].title == "Host" and mp.children[2].title == "Join")
 mp.children[1].override(mp.children[1]); assert(commands[2] == "__AmalurCoop:host" and changed[0x414304] == "Starting host...")
 mp.children[2].override(mp.children[2]); assert(commands[3] == "__AmalurCoop:join" and changed[0x414304] == "Connecting...")
+assert(save_opens == 2)
 current_status = "Connected to host"
 for i=1,60 do main_menu.on_update_event() end
 assert(updates == 60 and changed[0x414304] == current_status)
-assert(#main_menu.get_button_tree_info().children == 2)
+assert(#main_menu.get_button_tree_info().children == 4)
 ''')
 lua.globals().fixture_source = source
-lua.execute('setmetatable(main_menu, {__index=_G}); setfenv(assert(loadstring(fixture_source)), main_menu)(); assert(_G.amalur_coop_menu and rawget(main_menu, "amalur_coop_menu") == nil)');lua.execute('assert(#commands == 4 and #main_menu.get_button_tree_info().children == 2)')
+lua.execute('setmetatable(main_menu, {__index=_G}); setfenv(assert(loadstring(fixture_source)), main_menu)(); assert(_G.amalur_coop_menu and rawget(main_menu, "amalur_coop_menu") == nil)');lua.execute('assert(#commands == 4 and #main_menu.get_button_tree_info().children == 4 and save_opens == 2)')
 print('PASS Lua 5.1 menu: preserves original entries, native submenu/Host/Join callbacks, live status, original update handler and reload idempotency')
 b=Path(sys.argv[1]).read_bytes();b=b[b.index(b'\x1bLua'):]
 h=2166136261

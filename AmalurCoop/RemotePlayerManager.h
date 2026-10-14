@@ -9,6 +9,8 @@
 
 namespace RemotePlayerManager
 {
+    // Called by the native render-transform hook; zero preserves native input.
+    uintptr_t PrepareRenderMatrix(uintptr_t rendering);
     struct ProxyDiagnostics
     {
         std::uint32_t PlayerId = 0;
